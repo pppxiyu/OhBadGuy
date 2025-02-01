@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch_geometric as pyG
 from torch_geometric.nn import GCNConv
+from torch_geometric.nn import ChebConv
 
 
 class CrimeTorchDataset(torch.utils.data.Dataset):
@@ -135,7 +136,7 @@ class CrimePred:
         temporal_batchdata = [next(iter(loader)) for loader in temporal_dataloader]
         return temporal_batchdata  # a list of BatchData
 
-    def train_model(self, batch_size=32, lr=0.001, epoch=500, dir_cache='./'):
+    def train_model(self, batch_size=32, lr=0.001, epoch=1000, dir_cache='./'):
         import os
         from torch.utils.data import DataLoader
         train_dataloader = DataLoader(
@@ -145,7 +146,7 @@ class CrimePred:
 
         loss_func = torch.nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-        early_stopper = EarlyStopper(patience=5, min_delta=0)
+        early_stopper = EarlyStopper(patience=5, min_delta=1e-5)
 
         for e in range(epoch):
             print(f"Epoch {e + 1}\n-------------------------------")
@@ -200,7 +201,7 @@ class CrimePred:
                     os.remove(file_path)
             torch.save(self.model, f'{dir_cache}/model_main_{val_loss:>8f}.pth')
             torch.save(self.readout, f'{dir_cache}/model_readout_{val_loss:>8f}.pth')
-        return
+        return val_loss
 
     def pred_crime_test_set(self, dir_cache):
         import os
@@ -248,17 +249,7 @@ class EarlyStopper:
 
 
 class TGCN(torch.nn.Module):
-    r"""An implementation of the Temporal Graph Convolutional Gated Recurrent Cell.
-    For details see this paper: `"T-GCN: A Temporal Graph ConvolutionalNetwork for
-    Traffic Prediction." <https://arxiv.org/abs/1811.05320>`_
-
-    Args:
-        in_channels (int): Number of input features.
-        out_channels (int): Number of output features.
-        improved (bool): Stronger self loops. Default is False.
-        cached (bool): Caching the message weights. Default is False.
-        add_self_loops (bool): Adding self-loops for smoothing. Default is True.
-    """
+    r"""Obtained from Pytorch Geometric Temporal. Refer to their docs for annotations."""
 
     def __init__(
         self,
@@ -353,23 +344,126 @@ class TGCN(torch.nn.Module):
             edge_weight: torch.FloatTensor = None,
             H: torch.FloatTensor = None,
     ) -> torch.FloatTensor:
-        """
-        Making a forward pass. If edge weights are not present the forward pass
-        defaults to an unweighted graph. If the hidden state matrix is not present
-        when the forward pass is called it is initialized with zeros.
-
-        Arg types:
-            * **X** *(PyTorch Float Tensor)* - Node features.
-            * **edge_index** *(PyTorch Long Tensor)* - Graph edge indices.
-            * **edge_weight** *(PyTorch Long Tensor, optional)* - Edge weight vector.
-            * **H** *(PyTorch Float Tensor, optional)* - Hidden state matrix for all nodes.
-
-        Return types:
-            * **H** *(PyTorch Float Tensor)* - Hidden state matrix for all nodes.
-        """
         H = self._set_hidden_state(X, H)
         Z = self._calculate_update_gate(X, edge_index, edge_weight, H)
         R = self._calculate_reset_gate(X, edge_index, edge_weight, H)
         H_tilde = self._calculate_candidate_state(X, edge_index, edge_weight, H, R)
         H = self._calculate_hidden_state(Z, H, H_tilde)
         return H
+
+
+class TChebCN(torch.nn.Module):
+    r"""Adapted from Pytorch Geometric Temporal."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        improved: bool = False,
+        cached: bool = False,
+        add_self_loops: bool = True,
+    ):
+        super(TChebCN, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.improved = improved
+        self.cached = cached
+        self.add_self_loops = add_self_loops
+
+        self._create_parameters_and_layers()
+
+    def _create_update_gate_parameters_and_layers(self):
+        self.conv_z = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=1,
+        )
+        self.linear_z = torch.nn.Linear(2 * self.out_channels, self.out_channels)
+
+    def _create_reset_gate_parameters_and_layers(self):
+        self.conv_r = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=1,
+        )
+        self.linear_r = torch.nn.Linear(2 * self.out_channels, self.out_channels)
+
+    def _create_candidate_state_parameters_and_layers(self):
+        self.conv_h = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=1,
+        )
+        self.linear_h = torch.nn.Linear(2 * self.out_channels, self.out_channels)
+
+    def _create_parameters_and_layers(self):
+        self._create_update_gate_parameters_and_layers()
+        self._create_reset_gate_parameters_and_layers()
+        self._create_candidate_state_parameters_and_layers()
+
+    def _set_hidden_state(self, X, H):
+        if H is None:
+            H = torch.zeros(X.shape[0], self.out_channels).to(X.device)
+        return H
+
+    def _calculate_update_gate(self, X, edge_index, edge_weight, H):
+        Z = torch.cat([self.conv_z(X, edge_index, edge_weight), H], axis=1)
+        Z = self.linear_z(Z)
+        Z = torch.sigmoid(Z)
+        return Z
+
+    def _calculate_reset_gate(self, X, edge_index, edge_weight, H):
+        R = torch.cat([self.conv_r(X, edge_index, edge_weight), H], axis=1)
+        R = self.linear_r(R)
+        R = torch.sigmoid(R)
+        return R
+
+    def _calculate_candidate_state(self, X, edge_index, edge_weight, H, R):
+        H_tilde = torch.cat([self.conv_h(X, edge_index, edge_weight), H * R], axis=1)
+        H_tilde = self.linear_h(H_tilde)
+        H_tilde = torch.tanh(H_tilde)
+        return H_tilde
+
+    def _calculate_hidden_state(self, Z, H, H_tilde):
+        H = Z * H + (1 - Z) * H_tilde
+        return H
+
+    def forward(
+            self,
+            X: torch.FloatTensor,
+            edge_index: torch.LongTensor,
+            edge_weight: torch.FloatTensor = None,
+            H: torch.FloatTensor = None,
+    ) -> torch.FloatTensor:
+        H = self._set_hidden_state(X, H)
+        Z = self._calculate_update_gate(X, edge_index, edge_weight, H)
+        R = self._calculate_reset_gate(X, edge_index, edge_weight, H)
+        H_tilde = self._calculate_candidate_state(X, edge_index, edge_weight, H, R)
+        H = self._calculate_hidden_state(Z, H, H_tilde)
+        return H
+
+
+class CrimePredTuner(CrimePred):
+    def __init__(self, name_prefix='', storage_path="sqlite:///optuna_study.db",):
+        import datetime
+        super().__init__()
+        self.storage_path = storage_path
+        self.study_name = f"{name_prefix}{datetime.datetime.now().strftime("%m%d%H%M")}"
+
+    def objective(self, trial):
+        batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
+        lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+        self.build_model(1, 1, )
+        val_loss = self.train_model(batch_size=batch_size, lr=lr,)
+        return val_loss
+
+    def run_study(self, n_trials=50):
+        import optuna
+        study = optuna.create_study(
+            direction="minimize", storage=self.storage_path, study_name=self.study_name
+        )
+        study.optimize(self.objective, n_trials=n_trials)
+        print("Best hyperparameters:", study.best_params)
+        return study.best_params
+

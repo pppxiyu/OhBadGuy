@@ -1,6 +1,6 @@
 from config import *
 import data as dd
-import visualization as vis
+from utils import visualization as vis
 
 analysis_name = None
 

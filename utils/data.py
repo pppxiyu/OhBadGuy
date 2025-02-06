@@ -186,6 +186,22 @@ def get_top_counties(gdf):
     return gdf
 
 
+def shift_samples_test_2_train(train_x, train_y, val_x, val_y, test_x, test_y, no_shift):
+    if no_shift != 0:
+        val_x = np.concatenate((val_x, test_x[:1]), axis=0)
+        val_y = np.concatenate((val_y, test_y[:1]), axis=0)
+        test_x = test_x[1:]
+        test_y = test_y[1:]
+
+        train_x = np.concatenate((train_x, val_x[:1]), axis=0)
+        train_y = np.concatenate((train_y, val_y[:1]), axis=0)
+        val_x = val_x[1:]
+        val_y = val_y[1:]
+    else:
+        pass
+    return train_x, train_y, val_x, val_y, test_x, test_y
+
+
 if __name__ == '__main__':
 
     pass

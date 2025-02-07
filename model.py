@@ -200,7 +200,7 @@ class CrimePred:
 
         best_val_loss = 1e8
         for file in os.listdir(dir_cache):
-            if file.startswith("model_main_"):
+            if file.startswith("model_main_") and file.endswith(f"{test_loc}.pth"):
                 best_val_loss = float(file.split("model_main_")[1].split("_")[0])
                 break
         if val_loss < best_val_loss:
@@ -213,7 +213,7 @@ class CrimePred:
             torch.save(self.readout, f'{dir_cache}/model_readout_{val_loss:>8f}_{test_loc}.pth')
         return val_loss
 
-    def pred_crime_test_set(self, dir_cache):
+    def pred_crime_test_set(self, dir_cache, test_loc=''):
         import os
         from torch.utils.data import DataLoader
         test_dataloader = DataLoader(
@@ -221,9 +221,9 @@ class CrimePred:
         )
 
         for filename in os.listdir(dir_cache):
-            if filename.startswith('model_main'):
+            if filename.startswith('model_main') and filename.endswith(f"{test_loc}.pth"):
                 model = torch.load(f'{dir_cache}/{filename}', weights_only=False).to(self.device)
-            if filename.startswith('model_readout'):
+            if filename.startswith('model_readout')  and filename.endswith(f"{test_loc}.pth"):
                 readout = torch.load(f'{dir_cache}/{filename}', weights_only=False).to(self.device)
 
         with torch.no_grad():

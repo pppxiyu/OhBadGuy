@@ -1,4 +1,3 @@
-
 dir_crime = './data/data_2017-.csv'
 dir_thi_polygon = './data/ThiessenPolygons.shp'
 crs_polygon = 'EPSG:2240'

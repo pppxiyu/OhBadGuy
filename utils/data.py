@@ -63,7 +63,7 @@ class CrimeData:
 
     def build_dataset(
             self, crime_sampled, sequence_length,
-            random_index=False, train_split=0.8, val_split=0.1
+            random_index=False, train_split=0.8, val_split=0.1, train_val_shuffle=False
     ):
         dataset = []
         sequence = []
@@ -83,6 +83,12 @@ class CrimeData:
         val_index = indexes[int(train_split * dataset_x.shape[0]): int((train_split + val_split) * dataset_x.shape[0])]
         test_index = indexes[int((train_split + val_split) * dataset_x.shape[0]):]
         self.test_index = test_index
+
+        if train_val_shuffle:
+            train_val_index = np.concatenate((train_index, val_index))
+            np.random.shuffle(train_val_index)
+            train_index = train_val_index[:train_index.shape[0]]
+            val_index = train_val_index[train_index.shape[0]:]
 
         train_x = dataset_x[train_index][:, :, :, np.newaxis]
         train_y = dataset_y[train_index][:, np.newaxis, :, np.newaxis]
@@ -186,7 +192,7 @@ def get_top_counties(gdf):
     return gdf
 
 
-def shift_samples_test_2_train(train_x, train_y, val_x, val_y, test_x, test_y, no_shift):
+def shift_samples_test_2_train(train_x, train_y, val_x, val_y, test_x, test_y, no_shift, train_val_shuffle=False):
     if no_shift != 0:
         val_x = np.concatenate((val_x, test_x[:1]), axis=0)
         val_y = np.concatenate((val_y, test_y[:1]), axis=0)
@@ -199,6 +205,19 @@ def shift_samples_test_2_train(train_x, train_y, val_x, val_y, test_x, test_y, n
         val_y = val_y[1:]
     else:
         pass
+
+    if train_val_shuffle:
+        combined_x = np.concatenate((train_x, val_x), axis=0)
+        combined_y = np.concatenate((train_y, val_y), axis=0)
+        indices = np.arange(combined_x.shape[0])
+        np.random.shuffle(indices)
+        shuffled_x = combined_x[indices]
+        shuffled_y = combined_y[indices]
+        train_x = shuffled_x[:len(train_x)]
+        train_y = shuffled_y[:len(train_y)]
+        val_x = shuffled_x[len(train_x):]
+        val_y = shuffled_y[len(train_y):]
+
     return train_x, train_y, val_x, val_y, test_x, test_y
 
 

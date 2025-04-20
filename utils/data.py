@@ -3,10 +3,12 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 from datetime import datetime
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 class CrimeData:
-    def __init__(self,):
+    def __init__(self, ):
         self.time_interval = None
         self.crime = None
         self.polygon = None
@@ -14,7 +16,7 @@ class CrimeData:
 
     def import_thi_polygon(self, polygon_dir, crs):
         polygon = gpd.read_file(polygon_dir).set_crs(crs)
-        polygon = polygon.rename(columns={'OBJECTID': 'id',})
+        polygon = polygon.rename(columns={'OBJECTID': 'id', })
         polygon = polygon[['id', 'geometry']]
         self.polygon = polygon
 
@@ -40,7 +42,8 @@ class CrimeData:
         else:
             crime_resampled = self.resample_crime_space(crime_groups)
             zero_crime_index = self.get_empty_polygon(crime_resampled)
-            print(f'{zero_crime_index[0].size / crime_resampled.shape[1] * 100:.2f}% of no-crime polygons were removed.')
+            print(
+                f'{zero_crime_index[0].size / crime_resampled.shape[1] * 100:.2f}% of no-crime polygons were removed.')
             crime_resampled = np.delete(crime_resampled, zero_crime_index, axis=1)
         crime_resampled = crime_resampled[1:]  # remove the first which might have insufficient data
         print(f'Shape of each crime map is {crime_resampled.shape[1:]}. The first crime map removed.')
@@ -108,6 +111,104 @@ class CrimeData:
         return train_x, train_y, val_x, val_y, test_x, test_y, x_4_pred
 
 
+class RoadData:
+    def __init__(self, ):
+        self.road_lines = None
+        self.road_polygons = None
+        self.road_network = None
+
+    def read_road_shp(self, addr):
+        data = gpd.read_file(addr).set_crs("EPSG:2240").to_crs("EPSG:4326")
+        data = data[['geometry']]
+        data.insert(0, 'id', range(1, 1 + len(data)))
+        data.loc[:, 'length'] = (data.copy().to_crs("EPSG:3035"))['geometry'].length
+        data.loc[:, 'midpoint'] = (data.copy().to_crs("EPSG:3035"))['geometry'].centroid.to_crs("EPSG:4326")
+        self.road_lines = data
+
+    @staticmethod
+    def import_local_population(dir_population):
+        population = gpd.read_file(dir_population)
+        population = population[['#people', 'geometry']]
+        population = population.rename(columns={'#people': 'people_count'})
+        return population
+
+    def import_road_polygon(self, dir_thi_polygon):
+        polygon = gpd.read_file(dir_thi_polygon).set_crs("EPSG:2240").to_crs("EPSG:4326")
+        polygon = polygon[['OBJECTID', 'geometry']]
+        polygon = polygon.rename(columns={'OBJECTID': 'id'})
+        self.road_polygons = polygon
+        return
+
+    def get_pop_on_roads(self, dir_population, dir_thi_polygon):
+        population = self.import_local_population(dir_population)
+        self.import_road_polygon(dir_thi_polygon)
+        assert (self.road_polygons['id'] == self.road_lines['id']).all()
+        data_joined = population.sjoin(self.road_polygons, predicate='within')
+        data_joined = data_joined.loc[:, ['people_count', 'id', 'geometry']]
+        data_joined = data_joined.dissolve(by='id', aggfunc='sum')
+        # data_joined.insert(0, 'id', range(1, 1 + len(data_joined)))
+        data_joined = data_joined.reset_index()
+        self.road_polygons = data_joined
+        return
+
+    def connect_line(self, manage_disconnection=False):
+        # USE: Connect the Linestring objects in each MultiLineString
+        #      Some MultiLineString contain LineString objects that are not connected to each other
+        #      This function can fix the connection problem
+        import shapely.ops as ops
+        from shapely.geometry import MultiLineString, LineString
+
+        idx = 0
+        for geo in self.road_lines.geometry:
+            if isinstance(geo, MultiLineString):
+                geo = ops.linemerge(geo)
+            self.road_lines.loc[idx, 'geometry'] = geo
+
+            if manage_disconnection:
+                # this functionality is not double-checked
+                if isinstance(geo, MultiLineString):
+                    gg_decom = [tuple(x.coords) for x in list(geo)]
+                    gg_c = -1
+                    for gg_p in geo:
+                        gg_c += 1
+                        if gg_p.boundary.is_empty:
+                            del gg_decom[gg_c]
+
+                    gg_com = MultiLineString(gg_decom)
+                    for gg1, gg2 in zip(gg_com, gg_com[1:]):
+                        newline = LineString(
+                            [Point(gg1.boundary[1].x, gg1.boundary[1].y), Point(gg2.boundary[0].x, gg2.boundary[0].y)])
+                        gg_decom = gg_decom + [tuple(newline.coords)]
+
+                    geo = MultiLineString(gg_decom)
+                    geo = ops.linemerge(geo)
+                    self.road_lines.geometry[idx] = geo
+            idx += 1
+        return self.road_lines
+
+    def convert_roads_2_network(self, buffer=0):
+        import networkx as nx
+        graph = nx.Graph()
+        for i in self.road_lines['id']:
+            road_length = self.road_lines.loc[self.road_lines['id'] == i, 'length'].values[0]
+            graph.add_node(i, length=road_length)
+            try:
+                graph.nodes[i]['pop'] = self.road_polygons.loc[self.road_polygons['id'] == i, 'people_count'].values[0]
+            except:
+                graph.nodes[i]['pop'] = 0
+
+        for obid_1, road_1, length_1 in zip(
+                self.road_lines['id'], self.road_lines['geometry'], self.road_lines['length']
+        ):
+            for obid_2, road_2, length_2 in zip(
+                    self.road_lines['id'], self.road_lines['geometry'], self.road_lines['length']
+            ):
+                if (obid_1 != obid_2) and road_1.distance(road_2) <= buffer:
+                    graph.add_edge(obid_1, obid_2, weight=(length_1 + length_2) / 2)
+        self.road_network = graph
+        return
+
+
 def read_camera(addr, crs=None):
     df = pd.read_csv(addr)
     df = df[df['Technology'].isin([
@@ -116,7 +217,7 @@ def read_camera(addr, crs=None):
         'Gunshot Detection', 'Cell-site Simulator',
     ])]
     df = df[['County', 'State', 'lat', 'lon']]
-    df = df.rename(columns={'County': 'county', 'State': 'state',})
+    df = df.rename(columns={'County': 'county', 'State': 'state', })
     geometry = [Point(xy) for xy in zip(df['lon'], df['lat'])]
     gdf = gpd.GeoDataFrame(df, geometry=geometry)
     if crs is not None:
@@ -124,7 +225,7 @@ def read_camera(addr, crs=None):
     return gdf
 
 
-def geocode_camera(addr, save_dir,):
+def geocode_camera(addr, save_dir, ):
     import os
     if os.path.exists(save_dir):
         print("Geocoded camera file exists.")
@@ -155,11 +256,11 @@ def geocode_camera(addr, save_dir,):
         return df
 
 
-def read_population(addr):
+def read_population_acs(addr):
     df = pd.read_csv(addr)
     df = df.iloc[1:]
-    df = df[['GEO_ID', 'B01003_001E',]]
-    df = df.rename(columns={'GEO_ID': 'geo_id', 'B01003_001E': 'pop',})
+    df = df[['GEO_ID', 'B01003_001E', ]]
+    df = df.rename(columns={'GEO_ID': 'geo_id', 'B01003_001E': 'pop', })
     df['pop'] = df['pop'].astype(int)
     return df
 
@@ -174,7 +275,7 @@ def read_county(dir):
         '47', '48', '49', '50', '51', '53', '54', '55', '56'
     ])]  # CONUS
     gdf = gdf[['GEOIDFQ', 'geometry']]
-    gdf = gdf.rename(columns={'GEOIDFQ': 'geo_id',})
+    gdf = gdf.rename(columns={'GEOIDFQ': 'geo_id', })
     return gdf
 
 
@@ -222,9 +323,4 @@ def shift_samples_test_2_train(train_x, train_y, val_x, val_y, test_x, test_y, n
 
 
 if __name__ == '__main__':
-
     pass
-
-
-
-

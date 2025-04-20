@@ -37,17 +37,18 @@ def build_baseline_zero(shape):
     return np.zeros(shape)
 
 
-def cal_metrics(pred, true, label):
+def cal_metrics(pred, true, label, verbose=0):
     rmse = np.sqrt(np.mean((pred - true) ** 2))
     mae = np.mean((np.abs(pred - true)))
     kl_d = kl_divergence(pred, true)
     js_d = js_divergence(pred, true)
-    print(
-        f'{label} RMSE: {rmse:.5f}; '
-        f'{label} MAE: {mae:.5f}; '
-        f'{label} KL-Divergence: {kl_d:.5f}; '
-        f'{label} JS-Divergence: {js_d:.5f}'
-    )
+    if verbose > 0:
+        print(
+            f'{label} RMSE: {rmse:.5f}; '
+            f'{label} MAE: {mae:.5f}; '
+            f'{label} KL-Divergence: {kl_d:.5f}; '
+            f'{label} JS-Divergence: {js_d:.5f}'
+        )
     return {
         'RMSE': rmse, 'MAE': mae, 'KL-Divergence': kl_d, 'JS_Divergence': js_d
     }

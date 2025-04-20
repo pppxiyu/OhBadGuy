@@ -1,3 +1,4 @@
+import geopandas
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
@@ -47,3 +48,60 @@ def map_bar_cam_us(polygon, points, mode, dir_save):
         )
 
     return
+
+
+def map_city_roads_polygon_crime(city_b, roads=None, polygons=None, crimes=None, network=None):
+    import geopandas as gpd
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    # if city_b is not None:
+    city_boundary = gpd.read_file(city_b)
+    city_boundary = city_boundary[city_boundary['NAME'] == 'Warner Robins']
+    city_boundary = city_boundary.to_crs(epsg=4326)
+    city_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='none')
+
+    if roads is not None:
+        if network is None:
+            roads = roads.to_crs(epsg=4326)
+            roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+            roads_short.plot(ax=ax, color='#3C535B', linewidth=1)
+
+    if polygons is not None:
+        polygons = polygons.to_crs(epsg=4326)
+        polygons.plot(ax=ax, facecolor='none', edgecolor='white', linewidth=0.5)
+
+    if crimes is not None:
+        crimes = crimes.to_crs(epsg=4326)
+        crimes.sample(1000).plot(ax=ax, color='#F2055C',  markersize=5, alpha=0.6)
+
+    if network is not None:
+        import networkx as nx
+        assert roads is not None
+        roads = roads.to_crs(epsg=4326)
+        roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+        # roads_short.plot(ax=ax, color='#808080', linewidth=1)
+
+        roads_2 = roads_short.copy()
+        roads_2["x"] = roads_2.geometry.centroid.x
+        roads_2["y"] = roads_2.geometry.centroid.y
+        node_positions = {row['id']: (row['x'], row['y']) for _, row in roads_2.iterrows()}
+        valid_nodes = set(node_positions.keys())
+        filtered_edges = [(u, v) for u, v in network.copy().edges() if u in valid_nodes and v in valid_nodes]
+
+        graph = nx.DiGraph()
+        graph.add_edges_from(filtered_edges)
+        nx.draw(
+            graph, pos=node_positions, ax=ax,
+            node_size=10, node_color="#808080", edge_color="#808080", width=1, font_size=1
+        )
+
+    # show
+    ax.set_axis_off()
+    xmin, ymin, xmax, ymax = city_boundary.total_bounds
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    plt.tight_layout(pad=.5)
+    plt.show()
+
+    return
+

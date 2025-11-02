@@ -2,7 +2,7 @@ dir_crime = './data/data_2017-.csv'
 dir_thi_polygon = './data/ThiessenPolygons.shp'
 crs_polygon = 'EPSG:2240'
 crs_point = 'EPSG:2240'
-time_interval = '168h'
+time_interval = '504h'
 len_sequence = 24
 
 dir_camera = './data/camera_nationwide/Atlas of Surveillance-20241128.csv'

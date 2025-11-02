@@ -1,6 +1,7 @@
 from config import *
 from utils import data as dd
 from utils import evaluation as ev
+from utils import visualization as vis
 import model as mo
 
 # crime data
@@ -12,43 +13,44 @@ train_x, train_y, val_x, val_y, test_x, test_y, _ = crime_data.build_dataset(
     crime_resampled, len_sequence, train_val_shuffle=False
 )
 
-# road network data
-road_data = dd.RoadData()
-road_data.read_road_shp(dir_roads)
-road_data.connect_line()
-road_data.get_pop_on_roads(dir_local_population, dir_thi_polygon)
-road_data.convert_roads_2_network()
+# # road network data (close if only run crime prediction)
+# road_data = dd.RoadData()
+# road_data.read_road_shp(dir_roads)
+# road_data.connect_line()
+# road_data.get_pop_on_roads(dir_local_population, dir_thi_polygon)
+# road_data.convert_roads_2_network()
 
-# # hyper-param tuning (close after development)
-# crime_pred_tuner = mo.CrimePredTuner(model_name='GConvGRU', model_save=dir_cache)
-# crime_pred_tuner.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'Queen')
-# crime_pred_tuner.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
-# crime_pred_tuner.run_study()
+# hyper-param tuning (close after fine-tuning)
+crime_pred_tuner = mo.CrimePredTuner(model_name='GConvGRU', model_save=dir_cache)
+crime_pred_tuner.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'Queen')
+crime_pred_tuner.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
+crime_pred_tuner.run_study()
 
 # # train model recursively (close during tests, models have been cached)
 # crime_pred = mo.CrimePred()
 # crime_pred.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'Queen')
+# test_x_iterate = test_x.copy()
 # for i in range(test_x.shape[0]):
-#     train_x, train_y, val_x, val_y, test_x, test_y = dd.shift_samples_test_2_train(
-#         train_x, train_y, val_x, val_y, test_x, test_y, i, train_val_shuffle=False
+#     train_x, train_y, val_x, val_y, test_x_iterate, test_y = dd.shift_samples_test_2_train(
+#         train_x, train_y, val_x, val_y, test_x_iterate, test_y, i, train_val_shuffle=False
 #     )
-#     if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 19, 20, 23, 24, 25, 26, 27, 28]:
-#         continue
-#     for _ in range(5):
-#         crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
+#     for _ in range(10):
+#         crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x_iterate, test_y)
 #         crime_pred.build_model(1, 1, model_name='GConvGRU', K=2)
 #         crime_pred.train_model(8, 0.005, 100, dir_cache, test_loc=i)
+#         # crime_pred.train_model(8, 0.003, 100, dir_cache, test_loc=i)
 
 # record recursively
 metrics_ml = []
 metrics_naive = []
 crime_pred = mo.CrimePred()
 crime_pred.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'Queen')
+test_x_iterate = test_x.copy()
 for i in range(test_x.shape[0]):
-    train_x, train_y, val_x, val_y, test_x, test_y = dd.shift_samples_test_2_train(
-        train_x, train_y, val_x, val_y, test_x, test_y, i,
+    train_x, train_y, val_x, val_y, test_x_iterate, test_y = dd.shift_samples_test_2_train(
+        train_x, train_y, val_x, val_y, test_x_iterate, test_y, i,
     )
-    crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
+    crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x_iterate, test_y)
     pred, true = crime_pred.pred_crime_test_set(dir_cache, i)
     pred = pred[0, :, :]
     true = true[0, :, :]
@@ -65,7 +67,18 @@ for i in range(test_x.shape[0]):
 
 ev.aggr_metrics(metrics_ml, 'ml')
 ev.aggr_metrics(metrics_naive, 'naive')
-
+vis.scatter_crime_pred_metrics(
+    [d['RMSE'] for d in metrics_ml], [d['RMSE'] for d in metrics_naive], y_label='RMSE', annotate=True
+)
+vis.scatter_crime_pred_metrics(
+    [d['MAE'] for d in metrics_ml], [d['MAE'] for d in metrics_naive], y_label='MAE', annotate=True
+)
+# vis.scatter_crime_pred_metrics(
+#     [d['KL-Divergence'] for d in metrics_ml], [d['KL-Divergence'] for d in metrics_naive], y_label='KLD'
+# )
+# vis.scatter_crime_pred_metrics(
+#     [d['JS_Divergence'] for d in metrics_ml], [d['JS_Divergence'] for d in metrics_naive], y_label='JSD'
+# )
 
 
 print()

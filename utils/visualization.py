@@ -105,3 +105,67 @@ def map_city_roads_polygon_crime(city_b, roads=None, polygons=None, crimes=None,
 
     return
 
+
+def scatter_crime_pred_metrics(
+        metric_list_1, metric_list_2,
+        group_labels=('Dynamic','Static'), y_label='Metric value', annotate=False
+):
+    import numpy as np
+    from scipy import stats
+    import matplotlib.patheffects as pe
+
+    fig, ax = plt.subplots(figsize=(2.2, 4.5))
+
+    data1, data2 = map(np.asarray, (metric_list_1, metric_list_2))
+    ax.scatter([0] * data1.size, data1, color='#79B4D9')
+    ax.scatter([1] * data2.size, data2, color='#D99B66')
+
+    if annotate:
+        txt_style = dict(
+            ha='center', va='center', fontsize=7, zorder=3, color='white',
+            path_effects=[pe.Stroke(linewidth=1.2, foreground='black'), pe.Normal()]
+        )
+        for i, y in enumerate(data1):
+            ax.text(0, y, str(i), **txt_style)
+        for i, y in enumerate(data2):
+            ax.text(1, y, str(i), **txt_style)
+
+    for xpos, dat in zip([0, 1], [data1, data2]):
+        m, sd = dat.mean(), dat.std(ddof=1)
+        ax.hlines(m, xpos + 0.2, xpos + 0.4, lw=1, color='#595959')
+        ax.vlines(xpos + 0.3, m - sd, m + sd, lw=1, color='#595959')
+
+    _, p_val = stats.ttest_ind(data1, data2, equal_var=False)
+    y_max = max(data1.max(), data2.max())
+    bracket_bottom = y_max + 0.02 * y_max
+    bracket_top = bracket_bottom + 0.05 * y_max
+    ax.plot(
+        [0, 0, 1, 1], [bracket_bottom, bracket_top, bracket_top, bracket_bottom], lw=0.7, color='#454545'
+    )
+    ax.text(
+        0.5, bracket_top + 0.03 * y_max,f"$\\it{{P}}$ = {p_val:.3f}",
+        ha='center', va='bottom', color='#454545', fontsize=12,
+    )
+
+    for s in ('top', 'right'):
+        ax.spines[s].set_visible(False)
+    gap_frac = 0.03
+    ax.spines['bottom'].set_bounds(-0.3 + gap_frac, 1.3)
+    ax.spines['left'].set_color('#454545')
+    ax.spines['bottom'].set_color('#454545')
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(group_labels, fontsize=12, color='#454545')
+    ax.set_ylabel(y_label, fontsize=12, color='#454545')
+
+    ax.tick_params(axis='both', colors='#454545', labelsize=12)
+    ax.xaxis.set_ticks_position('bottom')
+    ax.yaxis.set_ticks_position('left')
+
+    ax.set_xlim(-0.4, 1.4)
+    y_min = min(data1.min(), data2.min())
+    ax.set_ylim(y_min - 0.3 * y_min, bracket_top + 0.05 * y_max)
+    ax.spines['bottom'].set_position(('data', y_min - 0.35 * y_min))
+    plt.tight_layout()
+    plt.show()
+

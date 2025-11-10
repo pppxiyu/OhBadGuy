@@ -2,8 +2,11 @@ dir_crime = './data/data_2017-.csv'
 dir_thi_polygon = './data/ThiessenPolygons.shp'
 crs_polygon = 'EPSG:2240'
 crs_point = 'EPSG:2240'
-time_interval = '504h'
-len_sequence = 24
+
+time_interval = '336h'
+len_sequence = 12
+
+gnn_k = 2
 
 dir_camera = './data/camera_nationwide/Atlas of Surveillance-20241128.csv'
 dir_camera_geocode = './data/camera_nationwide/Atlas of Surveillance-20241128_geocoded.csv'
@@ -16,7 +19,7 @@ dir_local_population = './data/populationDist.shp'
 
 dir_city_boundary = './data/census/Municipal Boundaries.json'
 
-dir_cache = './cache'
+dir_cache = './cache/cache_20251108'
 
 sim_iteration_num = 2
 sim_random_seed = 10

@@ -83,7 +83,7 @@ class CrimePred:
             else "cpu"
         )
 
-    def build_adj_from_polygons(self, polygon, mode='Queen', knn_n=None):
+    def build_adj_from_polygons(self, polygon, mode='graph', knn_n=None, road_geo=None):
         from scipy.sparse import csr_matrix
         from torch_geometric.utils import from_scipy_sparse_matrix
 
@@ -98,6 +98,62 @@ class CrimePred:
             coordinates = np.array(list(self.polygon.geometry.centroid.apply(lambda p: (p.x, p.y))))
             adj_matrix = kneighbors_graph(coordinates, n_neighbors=knn_n, mode='connectivity', include_self=False)
 
+        elif mode == 'graph':
+            assert road_geo is not None, 'Missing road_geo'
+            from shapely.geometry import LineString, Point
+            
+            # Create a mapping from id to index for quick lookup
+            id_to_idx = {row['id']: idx for idx, row in self.polygon.iterrows()}
+            
+            # Initialize adjacency matrix
+            n = len(self.polygon)
+            adj_matrix = np.zeros((n, n), dtype=int)
+            
+            # Build a dictionary mapping road endpoints to road ids
+            endpoint_to_roads = {}
+            for idx, row in road_geo.iterrows():
+                road_id = row['id']
+                geom = row['geometry']
+                
+                if isinstance(geom, LineString):
+                    # Get the start and end points of the road
+                    start_point = Point(geom.coords[0])
+                    end_point = Point(geom.coords[-1])
+                    
+                    # Round coordinates to avoid floating point precision issues
+                    start_key = (round(start_point.x, 8), round(start_point.y, 8))
+                    end_key = (round(end_point.x, 8), round(end_point.y, 8))
+                    
+                    # Add road_id to the endpoint dictionary
+                    if start_key not in endpoint_to_roads:
+                        endpoint_to_roads[start_key] = []
+                    endpoint_to_roads[start_key].append(road_id)
+                    
+                    if end_key not in endpoint_to_roads:
+                        endpoint_to_roads[end_key] = []
+                    endpoint_to_roads[end_key].append(road_id)
+            
+            # Build adjacency based on shared endpoints
+            for endpoint, road_ids in endpoint_to_roads.items():
+                if len(road_ids) > 1:
+                    # These roads are connected at this endpoint
+                    for i in range(len(road_ids)):
+                        for j in range(i + 1, len(road_ids)):
+                            road_i = road_ids[i]
+                            road_j = road_ids[j]
+                            
+                            # Get polygon indices
+                            if road_i in id_to_idx and road_j in id_to_idx:
+                                idx_i = id_to_idx[road_i]
+                                idx_j = id_to_idx[road_j]
+                                
+                                # Mark as adjacent (undirected graph)
+                                adj_matrix[idx_i, idx_j] = 1
+                                adj_matrix[idx_j, idx_i] = 1
+        else:
+            raise NotImplementedError
+
+        self.adj_matrix = adj_matrix
         edge_index, edge_weight = from_scipy_sparse_matrix(csr_matrix(adj_matrix))
         self.edge_index = edge_index.long()
         self.edge_weight = edge_weight.float()

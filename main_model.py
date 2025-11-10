@@ -72,17 +72,14 @@ for i in range(test_x.shape[0] - 1):
 
 ev.aggr_metrics(metrics_ml, 'ml')
 ev.aggr_metrics(metrics_naive, 'naive')
-# vis.scatter_crime_pred_metrics(
-#     [d['RMSE'] for d in metrics_ml], [d['RMSE'] for d in metrics_naive], y_label='RMSE', annotate=True
-# )
-# vis.scatter_crime_pred_metrics(
-#     [d['MAE'] for d in metrics_ml], [d['MAE'] for d in metrics_naive], y_label='MAE', annotate=True
-# )
-# vis.scatter_crime_pred_metrics(
-#     [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], y_label='Adapted_Pearson', annotate=True
-# )
 vis.scatter_crime_pred_metrics(
-    [d['Adapted_Moran'] for d in metrics_ml], [d['Adapted_Moran'] for d in metrics_naive], y_label='Adapted_Moran', annotate=True
+    [d['MAE'] for d in metrics_ml], [d['MAE'] for d in metrics_naive], y_label='MAE', annotate=True
+)
+vis.scatter_crime_pred_metrics(
+    [d['MAPE'] for d in metrics_ml], [d['MAPE'] for d in metrics_naive], y_label='MAPE', annotate=True
+)
+vis.scatter_crime_pred_metrics(
+    [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], y_label='Adapted_Pearson', annotate=True
 )
 
 print()

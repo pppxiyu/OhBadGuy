@@ -37,129 +37,154 @@ def build_baseline_zero(shape):
     return np.zeros(shape)
 
 
-def calculate_moran_bv_global(array1, array2, adjacency_matrix):
-    import numpy as np
-    from libpysal.weights import W
-    from esda.moran import Moran_BV
+def calculate_adapted_pearson(
+    array1, array2, adjacency_matrix, power=1, 
+    weighting='equal_2_step', kernel='bisquare', bandwidth=2,
+    return_elementwise=False
+):
     """
-    Calculate bivariate spatial correlation (Moran's I) between two arrays.
+    Calculate spatially-weighted correlation with value-dependent weighting.
     
-    Parameters:
-    -----------
-    array1 : np.array
-        First array, shape (n, 1) or (n,)
-    array2 : np.array
-        Second array, shape (n, 1) or (n,)
-    adjacency_matrix : np.array
-        Square adjacency matrix, shape (n, n)
+    Computes a weighted bivariate correlation where spatial proximity and actual values 
+    jointly determine the weight contribution. The weighting scheme w_ij(y_j) = w_ij^spatial * y_j^power
+    allows higher values in array2 to have greater influence on the correlation.
     
-    Returns:
-    --------
-    dict : Dictionary containing:
-        - 'I': Bivariate Moran's I statistic
-        - 'p_value': P-value from permutation test
-        - 'z_score': Standardized z-score
-    """
-    # Flatten arrays if they're (n, 1) shaped
-    x = array1.flatten()
-    y = array2.flatten()
-    
-    # Convert adjacency matrix to PySAL weights object
-    n = len(adjacency_matrix)
-    neighbors = {}
-    weights = {}
-    
-    for i in range(n):
-        neighbors[i] = []
-        weights[i] = []
-        for j in range(n):
-            if adjacency_matrix[i, j] != 0:
-                neighbors[i].append(j)
-                weights[i].append(adjacency_matrix[i, j])
-    
-    # Create PySAL weights object
-    w = W(neighbors, weights, silence_warnings=True)
-    
-    # Calculate bivariate Moran's I
-    moran_bv = Moran_BV(x, y, w)
-    
-    return {
-        'I': moran_bv.I,
-        'p_value': moran_bv.p_sim,
-        'z_score': moran_bv.z_sim
-    }
-
-
-def calculate_adapted_metrics(array1, array2, adjacency_matrix, power=1, normalization='adapted_pearson'):
-    """
-    Weighted bivariate Moran's I with direct value weighting and normalization.
-    Uses w_ij(y_j) = w_ij^spatial * y_j^power (with optional global normalization)
-    
-    Parameters:
-    -----------
+    Parameters
+    ----------
     array1 : np.array, shape (n, 1) or (n,)
         First variable (e.g., predictions)
     array2 : np.array, shape (n, 1) or (n,)
-        Second variable (e.g., targets, used for weighting)
+        Second variable (e.g., targets). Values from this array are used for weighting.
     adjacency_matrix : np.array, shape (n, n)
-        Spatial adjacency/weights matrix
+        Binary spatial adjacency matrix (1 for connected, 0 for not connected)
     power : float, default=1
-        Weight is array2^power 
-        - power=1: linear emphasis on high values
-        - power=2: quadratic emphasis (more aggressive)
-        - power=0.5: softer emphasis
-    normalization : str, default='weighted_variance'
-        'weighted_variance': Normalize by weighted variance (guarantees [-1, 1])
-        'standard': Keep standard unweighted variance normalization
+    weighting : str, default='equal_2_step'
+        Spatial weighting scheme:
+        - 'equal_2_step': Binary adjacency-based weights (1 for neighbors, 0 otherwise).
+          Includes self-connection (w_ii = 1).
+        - 'geo_decay': Distance decay weights based on shortest network path.
+          Uses kernel functions with specified bandwidth.
+    kernel : str, default='bisquare'
+        Kernel function for distance decay (only used when weighting='geo_decay'):
+        - 'bisquare': Bi-square kernel (1 - (d/h)²)² for d < h
+        - 'gaussian': Gaussian kernel exp(-d²/(2h²))
+    bandwidth : float, default=2
+        Bandwidth parameter for kernel functions (only used when weighting='geo_decay').
+        Controls the rate of spatial decay.
+        For example, if bandwidth=2, the location itself and the neighbors are used.
     
-    Formulation:
-    ------------
-    weighted_variance:
-        $$I_{xy} = \frac{\sum_{i}\sum_{j}w_{ij} \cdot y_j^p \cdot z_{x_i} \cdot z_{y_j}}{\sqrt{\sum_{i}\sum_{j}w_{ij} 
-        \cdot y_j^p \cdot z_{x_i}^2} \cdot \sqrt{\sum_{i}\sum_{j}w_{ij} \cdot y_j^p \cdot z_{y_j}^2}}$$
-        
-        where z_{x_i} = x_i - \bar{x}, z_{y_j} = y_j - \bar{y}
-        Guarantees I_{xy} ∈ [-1, 1]
+    Returns
+    -------
+    float
+        Weighted correlation coefficient in range [-1, 1]
     
-    standard:
-        $$I_{xy} = \frac{n}{\sum_{i}\sum_{j}w_{ij} \cdot y_j^p} \cdot \frac{\sum_{i}\sum_{j}w_{ij} 
-        \cdot y_j^p \cdot z_{x_i} \cdot z_{y_j}}{\sqrt{\sum_{i}z_{x_i}^2} \cdot \sqrt{\sum_{i}z_{y_i}^2}}$$
-        
-        where z_{x_i} = x_i - \bar{x}, z_{y_j} = y_j - \bar{y}
-        Similar to standard Moran's I with value-weighted spatial relationships
-
+    Mathematical Formulation
+    ------------------------
+    The weighted correlation is computed as:
+    
+    $$I_{xy} = \\frac{\\sum_{i}\\sum_{j}w_{ij} \\cdot y_j^p \\cdot z_{x_i} 
+    \\cdot z_{y_j}}{\\sqrt{\\sum_{i}\\sum_{j}w_{ij} \\cdot y_j^p \\cdot z_{x_i}^2} 
+    \\cdot \\sqrt{\\sum_{i}\\sum_{j}w_{ij} \\cdot y_j^p \\cdot z_{y_j}^2}}$$
+    
+    where:
+    - z_{x_i} = x_i - mean(x) (centered array1)
+    - z_{y_j} = y_j - mean(y) (centered array2)
+    - w_{ij} = spatial weights from adjacency or distance decay
+    - y_j^p = value-based weighting component
+    
+    The normalization guarantees I_{xy} ∈ [-1, 1]
+    
+    Notes
+    -----
+    - Self-connections (i=j) are included with weight w_ii = 1 * y_i^power
+    - Higher values in array2 contribute more to the correlation when power > 0
+    - Designed for network-based spatial correlation analysis
     """
+
     # Flatten arrays if needed
     x = array1.flatten()
     y = array2.flatten()
-    W = adjacency_matrix.copy().astype(float)
     n = len(x)
-    
-    # Create value-dependent weights: w_ij(y_j) = w_ij^spatial * y_j^power
-    W_weighted = np.zeros_like(W)
-    for i in range(n):
-        for j in range(n):
-            if W[i, j] != 0:
-                W_weighted[i, j] = W[i, j] * (y[j] ** power)
-            if i == j:  # consider self-connection
-                W_weighted[i, j] = 1 * (y[j] ** power)
 
-    # Sum of all weighted connections
-    W_sum = np.sum(W_weighted)
-    assert W_sum > 0, "Sum of weights must be positive"
+    if weighting == 'equal_2_step':
+        # combine spatial and value weights
+        W = adjacency_matrix.copy().astype(float)
+        W_weighted = np.zeros_like(W)
+        for i in range(n):
+            for j in range(n):
+                if W[i, j] != 0:
+                    W_weighted[i, j] = W[i, j] * (y[j] ** power)
+                if i == j:  # consider self-connection
+                    W_weighted[i, j] = 1 * (y[j] ** power)
+
+    elif weighting == 'geo_decay':
+        # Calculate shortest path distances (number of steps in network)
+        # Replace 0s with inf for non-connected nodes, keep adjacency for connected
+        from scipy.sparse.csgraph import shortest_path
+        graph = adjacency_matrix.copy().astype(float)
+        graph[graph == 0] = np.inf
+        np.fill_diagonal(graph, 0)  # Distance to self is 0
+        distance_matrix = shortest_path(csgraph=graph, directed=False, return_predecessors=False)
+        if kernel == 'gaussian':
+            # Gaussian kernel: w_ij = exp(-d_ij^2 / (2*h^2))
+            W = np.exp(-distance_matrix ** 2 / (2 * bandwidth ** 2))
+        elif kernel == 'bisquare':
+            # Bi-square kernel
+            W = np.zeros(distance_matrix.shape)
+            mask = distance_matrix < bandwidth
+            W[mask] = (1 - (distance_matrix[mask] / bandwidth) ** 2) ** 2
+        else:
+            raise ValueError(f"Unknown kernel: {kernel}. Use 'gaussian' or 'bisquare'")
+
+        W_weighted = np.zeros_like(W)
+        for i in range(n):
+            for j in range(n):
+                if W[i, j] != 0:
+                    W_weighted[i, j] = W[i, j] * (y[j] ** power)
     
-    # Center the data (using original y values, not normalized)
-    x_centered = x - np.mean(x)
-    y_centered = y - np.mean(y)
+    else:
+        raise ValueError(f"Unknown weighting method: {weighting}. Use 'equal_2_step' or 'geo_decay'")
+
+    if return_elementwise:
+        pass
+        # I_local = np.zeros(n)
+        # for i in range(n):
+        #     # Get weights for location i
+        #     weights_i = W_weighted[i, :]
+
+        #     # sum_weights = np.sum(weights_i)
+        #     # if sum_weights == 0:
+        #     #     I_local[i] = np.nan
+        #     #     continue
+        #     # x_mean_i = np.sum(weights_i * x) / sum_weights
+        #     # y_mean_i = np.sum(weights_i * y) / sum_weights
+
+        #     x_mean_i = np.mean(x)
+        #     y_mean_i = np.mean(y)
+            
+        #     # Calculate deviations from local means
+        #     x_centered = x - x_mean_i
+        #     y_centered = y - y_mean_i
+            
+        #     # Calculate weighted covariance
+        #     cov_i = np.sum(weights_i * x_centered * y_centered)
+        #     var_x_i = np.sum(weights_i * x_centered**2)
+        #     var_y_i = np.sum(weights_i * y_centered**2)
+            
+        #     # Calculate local correlation
+        #     if var_x_i == 0 or var_y_i == 0:
+        #         I_local[i] = np.nan
+        #     else:
+        #         I_local[i] = cov_i / np.sqrt(var_x_i * var_y_i)
+        
+        # return I_local[~np.isnan(I_local)].mean()
     
-    # Numerator: sum_i sum_j w_ij(y_j) * x_centered_i * y_centered_j
-    numerator = 0
-    for i in range(n):
-        for j in range(n):
-            numerator += W_weighted[i, j] * x_centered[i] * y_centered[j]
-    
-    # Denominator based on normalization method
-    if normalization == 'adapted_pearson':
+    else:
+        # Center the data (using original y values, not normalized)
+        x_centered = x - np.mean(x)
+        y_centered = y - np.mean(y)
+
+        # Denominator based on normalization method
         weighted_var_x = 0
         weighted_var_y = 0
         for i in range(n):
@@ -168,110 +193,15 @@ def calculate_adapted_metrics(array1, array2, adjacency_matrix, power=1, normali
                 weighted_var_y += W_weighted[i, j] * y_centered[j]**2
         denominator = np.sqrt(weighted_var_x * weighted_var_y)
         assert denominator != 0, "Denominator in weighted variance normalization cannot be zero"
+
+        # Numerator: sum_i sum_j w_ij(y_j) * x_centered_i * y_centered_j
+        numerator = 0
+        for i in range(n):
+            for j in range(n):
+                numerator += W_weighted[i, j] * x_centered[i] * y_centered[j]
+
         I_weighted = numerator / denominator
-        
-    elif normalization == 'adapted_moran':
-        var_x = np.sum(x_centered**2)
-        var_y = np.sum(y_centered**2)
-        denominator = np.sqrt(var_x * var_y)
-        assert denominator != 0, "Denominator in standard normalization cannot be zero"
-        I_weighted = (n / W_sum) * (numerator / denominator)
-    
-    else:
-        raise ValueError(f"Unknown normalization method: {normalization}")
-    
-    return I_weighted
-
-
-def calculate_weighted_moran_bv_local(array1, array2, adjacency_matrix, power=1, permutations=0):
-    """
-    Calculate weighted bivariate LISA (Local Indicators of Spatial Association).
-    Weights are based on array1 values and normalized to sum to 1.
-    Handles isolated locations (nodes with no neighbors).
-    
-    Parameters:
-    -----------
-    array1 : np.array, shape (n, 1) or (n,)
-        First variable (used for weighting, e.g., predictions)
-    array2 : np.array, shape (n, 1) or (n,)
-        Second variable (e.g., targets)
-    adjacency_matrix : np.array, shape (n, n)
-        Spatial adjacency/weights matrix
-    power : float, default=1
-        Weight emphasis: array1^power (1=linear, 2=quadratic, 0.5=softer)
-    permutations : int, default=0
-        Number of permutations for significance testing (0 to skip testing)
-    
-    Returns:
-    --------
-    dict with:
-        - 'weighted_global': Value-weighted global statistic
-        - 'local_Is': Array of local statistics for each location
-        - 'p_values': Array of p-values for each location (None if permutations=0)
-        - 'value_weights': Normalized weights (sum to 1) used in calculation
-        - 'n_isolated': Number of isolated locations
-    """
-    from libpysal.weights import W
-    from esda.moran import Moran_Local_BV
-    import numpy as np
-    
-    # Flatten and convert to float64
-    x = array1.flatten().astype(np.float64)
-    y = array2.flatten().astype(np.float64)
-    
-    n = len(adjacency_matrix)
-    
-    # Create normalized value-based weights (sum to 1)
-    value_weights = np.abs(x) ** power
-    weight_sum = np.sum(value_weights)
-    if weight_sum > 1e-10:
-        value_weights = value_weights / weight_sum
-    else:
-        # If all values are zero/near-zero, use uniform weights
-        value_weights = np.ones(n) / n
-    
-    # Build PySAL weights dictionary
-    neighbors = {}
-    weights_dict = {}
-    isolated_count = 0
-    
-    for i in range(n):
-        neighbor_list = []
-        weight_list = []
-        
-        for j in range(n):
-            if adjacency_matrix[i, j] != 0:
-                neighbor_list.append(j)
-                weight_list.append(float(adjacency_matrix[i, j]))
-        
-        if len(neighbor_list) > 0:
-            neighbors[i] = neighbor_list
-            weights_dict[i] = weight_list
-        else:
-            # For isolated locations, add self as neighbor to prevent errors
-            neighbors[i] = [i]
-            weights_dict[i] = [1.0]
-            isolated_count += 1
-    
-    # Create PySAL weights object
-    w = W(neighbors, weights_dict, silence_warnings=True)
-    
-    # Check for sufficient valid observations
-    assert n - isolated_count >= 3
-    
-    # Calculate local bivariate Moran's I without permutation testing
-    lisa_bv = Moran_Local_BV(x, y, w, permutations=permutations)
-    
-    # Calculate weighted global statistic, use value_weights (normalized to sum to 1)
-    weighted_global = float(np.sum(value_weights * lisa_bv.Is))
-    
-    return {
-        'weighted_global': weighted_global,
-        'local_Is': lisa_bv.Is,
-        'p_values': lisa_bv.p_sim if permutations > 0 else None,
-        'value_weights': value_weights,
-        'n_isolated': isolated_count
-    }
+        return I_weighted
 
 
 def calculate_weighted_Pearson(pred, true, p=1):
@@ -325,111 +255,6 @@ def calculate_weighted_Pearson(pred, true, p=1):
     return r_w
 
 
-def calculate_geo_weighted_correlation(pred, true, adjacency_matrix, bandwidth=2.5, kernel='gaussian', aggr='mean'):
-    from scipy.sparse.csgraph import shortest_path
-
-    """
-    Calculate Geographically Weighted Correlation for network topology.
-    
-    Parameters:
-    -----------
-    pred : np.ndarray
-        Predicted values, shape (280, 1)
-    true : np.ndarray
-        True values, shape (280, 1)
-    adjacency_matrix : np.ndarray
-        Adjacency matrix defining network topology, shape (280, 280)
-        Values are 0 (no connection) or 1 (connected)
-    bandwidth : float, default=2.5
-        Bandwidth parameter for spatial weighting (in network steps/hops)
-        Default of 2.5 means weights decay significantly after 2-3 steps
-    kernel : str, default='gaussian'
-        Kernel function for spatial weights: 'gaussian' or 'bisquare'
-    aggr : str, default='mean'
-        Aggregation method: 'mean' or 'weighted_mean'
-    
-    Returns:
-    --------
-    gwc : np.ndarray
-        Local correlation at each location, shape (280,)
-    gwc_aggr : float
-        Aggregated correlation value
-    """
-    # Flatten inputs to 1D arrays
-    pred = pred.flatten()
-    true = true.flatten()
-    
-    n = len(pred)
-    
-    # Calculate shortest path distances (number of steps in network)
-    # Replace 0s with inf for non-connected nodes, keep adjacency for connected
-    graph = adjacency_matrix.copy().astype(float)
-    graph[graph == 0] = np.inf
-    np.fill_diagonal(graph, 0)  # Distance to self is 0
-    
-    # Compute shortest path distance matrix
-    distance_matrix = shortest_path(csgraph=graph, directed=False, return_predecessors=False)
-    
-    # Initialize array for local correlations
-    gwc = np.zeros(n)
-    
-    # Calculate GWC for each location
-    for i in range(n):
-        # Get distances from location i to all other locations
-        distances = distance_matrix[i, :]
-        
-        # Calculate spatial weights based on kernel function
-        if kernel == 'gaussian':
-            # Gaussian kernel: w_ij = exp(-d_ij^2 / (2*h^2))
-            weights = np.exp(-distances**2 / (2 * bandwidth**2))
-        elif kernel == 'bisquare':
-            # Bi-square kernel
-            weights = np.zeros(n)
-            mask = distances < bandwidth
-            weights[mask] = (1 - (distances[mask] / bandwidth)**2)**2
-        else:
-            raise ValueError(f"Unknown kernel: {kernel}. Use 'gaussian' or 'bisquare'")
-
-        # Calculate local weighted means
-        sum_weights = np.sum(weights)
-        assert sum_weights != 0
-            
-        X_mean_i = np.sum(weights * pred) / sum_weights
-        Y_mean_i = np.sum(weights * true) / sum_weights
-        
-        # Calculate deviations from local means
-        X_dev = pred - X_mean_i
-        Y_dev = true - Y_mean_i
-        
-        # Calculate weighted covariance
-        cov_i = np.sum(weights * X_dev * Y_dev)
-        
-        # Calculate weighted standard deviations
-        std_X_i = np.sqrt(np.sum(weights * X_dev**2))
-        std_Y_i = np.sqrt(np.sum(weights * Y_dev**2))
-        
-        # Calculate local correlation
-        if std_X_i == 0 or std_Y_i == 0:
-            gwc[i] = np.nan
-        else:
-            gwc[i] = cov_i / (std_X_i * std_Y_i)
-    
-    # Aggregate the local correlations
-    # Remove NaN values for aggregation
-    gwc_valid = gwc[~np.isnan(gwc)]
-    true_valid = true[~np.isnan(gwc)]
-    pred_valid = pred[~np.isnan(gwc)]
-    
-    if aggr == 'mean':
-        gwc_aggr = np.mean(gwc_valid)
-    elif aggr == 'weighted_mean':
-        gwc_aggr = np.sum(gwc_valid * ((true_valid + pred_valid) / np.sum((true_valid + pred_valid))))
-    else:
-        raise ValueError(f"Unknown aggregation method: {aggr}. Use 'mean' or 'weighted_mean'")
-    
-    return gwc_aggr
-
-
 def cal_metrics(pred, true, label, verbose=0, adj_matrix=None):
     from sklearn.metrics import r2_score
     from scipy.stats import spearmanr, kendalltau, pearsonr
@@ -440,28 +265,26 @@ def cal_metrics(pred, true, label, verbose=0, adj_matrix=None):
     non_zero_mask = true != 0
     mape = np.mean(np.abs((true[non_zero_mask] - pred[non_zero_mask]) / (true[non_zero_mask] + 1e-10))) * 100
 
-    w_pearson = calculate_weighted_Pearson(pred, true, p=1)
+    # geo_pearson = calculate_geo_weighted_correlation(
+    #     pred, true, adj_matrix, aggr='weighted_mean',
+    #     bandwidth=2, kernel='bisquare', power=20
+    # )
 
-    geo_pearson = calculate_geo_weighted_correlation(pred, true, adj_matrix, bandwidth=1, aggr='weighted_mean')
-
-    adpated_pearson = calculate_adapted_metrics(
-        pred, true, adj_matrix, 
-        power=20, normalization='adapted_pearson',
+    adpated_pearson = calculate_adapted_pearson(pred, true, adj_matrix, power=20, weighting='equal_2_step')
+    adpated_pearson_local = calculate_adapted_pearson(
+        pred, true, adj_matrix, power=20, 
+        weighting='geo_decay', kernel='bisquare', bandwidth=3,
+        return_elementwise=True
     )
 
     if verbose > 0:
         print(
-            # error metrics
             f'{label} MAE: {mae:.5f}; '
             f'{label} MAPE: {mape:.5f}; '
-            # peason
             f'{label} Adapted Pearson: {adpated_pearson:.5f}; ',
-            f'{label} Weighted Pearson: {w_pearson:.5f}; '
-            f'{label} Geo Pearson Mean: {geo_pearson:.5f};'
         )
     return {
-        'MAE': mae, 'MAPE': mape, 'Weighted_Pearson': w_pearson, 'Geo_Pearson': geo_pearson,
-        'Adapted_Pearson': adpated_pearson, 
+        'MAE': mae, 'MAPE': mape, 'Adapted_Pearson': adpated_pearson,
     }
 
 

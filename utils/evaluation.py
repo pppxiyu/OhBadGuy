@@ -40,7 +40,6 @@ def build_baseline_zero(shape):
 def calculate_adapted_pearson(
     array1, array2, adjacency_matrix, power=1, 
     weighting='equal_2_step', kernel='bisquare', bandwidth=2,
-    return_elementwise=False
 ):
     """
     Calculate spatially-weighted correlation with value-dependent weighting.
@@ -145,63 +144,28 @@ def calculate_adapted_pearson(
     else:
         raise ValueError(f"Unknown weighting method: {weighting}. Use 'equal_2_step' or 'geo_decay'")
 
-    if return_elementwise:
-        pass
-        # I_local = np.zeros(n)
-        # for i in range(n):
-        #     # Get weights for location i
-        #     weights_i = W_weighted[i, :]
+    # Center the data (using original y values, not normalized)
+    x_centered = x - np.mean(x)
+    y_centered = y - np.mean(y)
 
-        #     # sum_weights = np.sum(weights_i)
-        #     # if sum_weights == 0:
-        #     #     I_local[i] = np.nan
-        #     #     continue
-        #     # x_mean_i = np.sum(weights_i * x) / sum_weights
-        #     # y_mean_i = np.sum(weights_i * y) / sum_weights
+    # Denominator based on normalization method
+    weighted_var_x = 0
+    weighted_var_y = 0
+    for i in range(n):
+        for j in range(n):
+            weighted_var_x += W_weighted[i, j] * x_centered[i]**2
+            weighted_var_y += W_weighted[i, j] * y_centered[j]**2
+    denominator = np.sqrt(weighted_var_x * weighted_var_y)
+    assert denominator != 0, "Denominator in weighted variance normalization cannot be zero"
 
-        #     x_mean_i = np.mean(x)
-        #     y_mean_i = np.mean(y)
-            
-        #     # Calculate deviations from local means
-        #     x_centered = x - x_mean_i
-        #     y_centered = y - y_mean_i
-            
-        #     # Calculate weighted covariance
-        #     cov_i = np.sum(weights_i * x_centered * y_centered)
-        #     var_x_i = np.sum(weights_i * x_centered**2)
-        #     var_y_i = np.sum(weights_i * y_centered**2)
-            
-        #     # Calculate local correlation
-        #     if var_x_i == 0 or var_y_i == 0:
-        #         I_local[i] = np.nan
-        #     else:
-        #         I_local[i] = cov_i / np.sqrt(var_x_i * var_y_i)
-        
-        # return I_local[~np.isnan(I_local)].mean()
-    
-    else:
-        # Center the data (using original y values, not normalized)
-        x_centered = x - np.mean(x)
-        y_centered = y - np.mean(y)
+    # Numerator: sum_i sum_j w_ij(y_j) * x_centered_i * y_centered_j
+    numerator = 0
+    for i in range(n):
+        for j in range(n):
+            numerator += W_weighted[i, j] * x_centered[i] * y_centered[j]
 
-        # Denominator based on normalization method
-        weighted_var_x = 0
-        weighted_var_y = 0
-        for i in range(n):
-            for j in range(n):
-                weighted_var_x += W_weighted[i, j] * x_centered[i]**2
-                weighted_var_y += W_weighted[i, j] * y_centered[j]**2
-        denominator = np.sqrt(weighted_var_x * weighted_var_y)
-        assert denominator != 0, "Denominator in weighted variance normalization cannot be zero"
-
-        # Numerator: sum_i sum_j w_ij(y_j) * x_centered_i * y_centered_j
-        numerator = 0
-        for i in range(n):
-            for j in range(n):
-                numerator += W_weighted[i, j] * x_centered[i] * y_centered[j]
-
-        I_weighted = numerator / denominator
-        return I_weighted
+    I_weighted = numerator / denominator
+    return I_weighted
 
 
 def calculate_weighted_Pearson(pred, true, p=1):
@@ -271,11 +235,6 @@ def cal_metrics(pred, true, label, verbose=0, adj_matrix=None):
     # )
 
     adpated_pearson = calculate_adapted_pearson(pred, true, adj_matrix, power=20, weighting='equal_2_step')
-    adpated_pearson_local = calculate_adapted_pearson(
-        pred, true, adj_matrix, power=20, 
-        weighting='geo_decay', kernel='bisquare', bandwidth=3,
-        return_elementwise=True
-    )
 
     if verbose > 0:
         print(

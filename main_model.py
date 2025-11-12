@@ -57,10 +57,34 @@ for i in range(test_x.shape[0] - 1):
     )
     crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x_iterate, test_y_iterate)
     pred, true = crime_pred.pred_crime_test_set(dir_cache, i)
-    pred = pred[0, :, :]
-    true = true[0, :, :]
-    metrics_ml.append(ev.cal_metrics(pred, true, 'ml', adj_matrix=crime_pred.adj_matrix))
-    metrics_naive.append(ev.cal_metrics(ev.build_baseline_ave([train_x, val_x]), true, 'naive', adj_matrix=crime_pred.adj_matrix))
+    metrics_ml.append(ev.cal_metrics(pred[0, :, :], true[0, :, :], 'ml', adj_matrix=crime_pred.adj_matrix))
+    metrics_naive.append(ev.cal_metrics(ev.build_baseline_ave([train_x, val_x]), true[0, :, :], 'naive', adj_matrix=crime_pred.adj_matrix))
+
+    # vis: dynamics vs static density map
+    if i in [8]:
+        vis.density_crime_map(
+            [ev.build_baseline_ave([train_x, val_x]).flatten(), pred[0, :, :].flatten()], 
+            crime_pred.adj_matrix,
+            dir_city_boundary, 
+            roads=road_data.road_lines.copy(),
+            polygons=crime_data.polygon.copy(),
+            spatial_resolution=200, n_layers=40
+        )
+        vis.density_crime_map(
+            pred[0, :, :].flatten(), crime_pred.adj_matrix,
+            dir_city_boundary, 
+            roads=road_data.road_lines.copy(),
+            polygons=crime_data.polygon.copy(),
+            spatial_resolution=200, n_layers=40
+        )
+        vis.density_crime_map(
+            ev.build_baseline_ave([train_x, val_x]).flatten(), crime_pred.adj_matrix,
+            dir_city_boundary, 
+            roads=road_data.road_lines.copy(),
+            polygons=crime_data.polygon.copy(),
+            spatial_resolution=200, n_layers=40
+        )
+
 
     # # cam placement
     # sim = mo.SensorPlacement(
@@ -70,17 +94,14 @@ for i in range(test_x.shape[0] - 1):
     # sim.run_sim()
     # sim.place_multiple_cameras(cam_count=sim_cam_num)  # pre_located_cam=sim_pre_located_cam
 
+# vis: metrics and metrics scatter
 ev.aggr_metrics(metrics_ml, 'ml')
 ev.aggr_metrics(metrics_naive, 'naive')
 vis.scatter_crime_pred_metrics(
-    [d['MAE'] for d in metrics_ml], [d['MAE'] for d in metrics_naive], y_label='MAE', annotate=True
-)
-vis.scatter_crime_pred_metrics(
-    [d['MAPE'] for d in metrics_ml], [d['MAPE'] for d in metrics_naive], y_label='MAPE', annotate=True
-)
-vis.scatter_crime_pred_metrics(
-    [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], y_label='Adapted_Pearson', annotate=True
-)
+    [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], 
+    y_label='Weighted Pearson Coefficient', annotate=False, stats_test='mannwhitneyu', alternative='greater',
+    save_path=f'{dir_figs}/scatter_crime_pred_pearson.png'
+)  
 
 print()
 

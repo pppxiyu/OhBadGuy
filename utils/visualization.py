@@ -108,7 +108,8 @@ def map_city_roads_polygon_crime(city_b, roads=None, polygons=None, crimes=None,
 
 def scatter_crime_pred_metrics(
         metric_list_1, metric_list_2,
-        group_labels=('Dynamic','Static'), y_label='Metric value', annotate=False
+        group_labels=('Dynamic','Static'), y_label='Metric value', annotate=False,
+        stats_test='mannwhitneyu', alternative=None, save_path=None
 ):
     import numpy as np
     from scipy import stats
@@ -116,9 +117,11 @@ def scatter_crime_pred_metrics(
 
     fig, ax = plt.subplots(figsize=(2.2, 4.5))
 
+    plt.rcParams['font.family'] = 'Arial'
+
     data1, data2 = map(np.asarray, (metric_list_1, metric_list_2))
-    ax.scatter([0] * data1.size, data1, color='#79B4D9')
-    ax.scatter([1] * data2.size, data2, color='#D99B66')
+    ax.scatter([0] * data1.size, data1, color='#79B4D9', edgecolors='#666666', linewidths=1, s=50)
+    ax.scatter([1] * data2.size, data2, color='#D99B66', edgecolors='#666666', linewidths=1, s=50)
 
     if annotate:
         txt_style = dict(
@@ -132,10 +135,21 @@ def scatter_crime_pred_metrics(
 
     for xpos, dat in zip([0, 1], [data1, data2]):
         m, sd = dat.mean(), dat.std(ddof=1)
-        ax.hlines(m, xpos + 0.2, xpos + 0.4, lw=1, color='#595959')
-        ax.vlines(xpos + 0.3, m - sd, m + sd, lw=1, color='#595959')
+        ax.hlines(m, xpos + 0.2, xpos + 0.4, lw=1.5, color='#595959')
+        ax.vlines(xpos + 0.3, m - sd, m + sd, lw=1.5, color='#595959')
 
-    _, p_val = stats.ttest_ind(data1, data2, equal_var=False)
+    if stats_test == 'ttest':
+        _, p_val = stats.ttest_ind(data1, data2, equal_var=False)
+    elif stats_test == 'mannwhitneyu':
+        """
+            Use the Mann-Whitney U test when you have two independent groups with small 
+            sample sizes and your data are non-normal or ordinal.
+        """
+        assert alternative in ('two-sided', 'less', 'greater')
+        _, p_val = stats.mannwhitneyu(data1, data2, alternative=alternative)
+    else:
+        raise ValueError(f'Unknown stats_test: {stats_test}')
+
     y_max = max(data1.max(), data2.max())
     bracket_bottom = y_max + 0.02 * y_max
     bracket_top = bracket_bottom + 0.05 * y_max
@@ -143,7 +157,7 @@ def scatter_crime_pred_metrics(
         [0, 0, 1, 1], [bracket_bottom, bracket_top, bracket_top, bracket_bottom], lw=0.7, color='#454545'
     )
     ax.text(
-        0.5, bracket_top + 0.03 * y_max,f"$\\it{{P}}$ = {p_val:.3f}",
+        0.5, bracket_top + 0.03 * y_max,f"$\\it{{p}}$ = {p_val:.3f}",
         ha='center', va='bottom', color='#454545', fontsize=12,
     )
 
@@ -156,9 +170,9 @@ def scatter_crime_pred_metrics(
 
     ax.set_xticks([0, 1])
     ax.set_xticklabels(group_labels, fontsize=12, color='#454545')
-    ax.set_ylabel(y_label, fontsize=12, color='#454545')
+    ax.set_ylabel(y_label, fontsize=14, color='#454545')
 
-    ax.tick_params(axis='both', colors='#454545', labelsize=12)
+    ax.tick_params(axis='both', colors='#454545', labelsize=14)
     ax.xaxis.set_ticks_position('bottom')
     ax.yaxis.set_ticks_position('left')
 
@@ -167,5 +181,164 @@ def scatter_crime_pred_metrics(
     ax.set_ylim(y_min - 0.3 * y_min, bracket_top + 0.05 * y_max)
     ax.spines['bottom'].set_position(('data', y_min - 0.35 * y_min))
     plt.tight_layout()
-    plt.show()
 
+    if save_path is None:
+        plt.show()
+    else:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+
+
+def density_crime_map(
+    values, adj_matrix, city_b, roads, polygons, crimes=None,
+    spatial_resolution=200, n_layers=20, save_path=None
+):
+    import geopandas as gpd
+    import numpy as np
+    from scipy.stats import gaussian_kde
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    # Check if values is a list of two arrays for difference mapping
+    is_difference_map = isinstance(values, list)
+    if is_difference_map:
+        assert len(values) == 2, "For difference mapping, values must be a list of exactly 2 arrays"
+        values1, values2 = values[0], values[1]
+    
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    """
+    Base map
+    """
+    city_boundary = gpd.read_file(city_b)
+    city_boundary = city_boundary[city_boundary['NAME'] == 'Warner Robins']
+    city_boundary = city_boundary.to_crs(epsg=4326)
+    city_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='none')
+    
+    if roads is not None:
+        roads = roads.to_crs(epsg=4326)
+        roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+        # Use lighter gray for roads in difference map
+        road_color = '#999999' if is_difference_map else '#3C535B'
+        roads_short.plot(ax=ax, color=road_color, linewidth=1)
+    
+    if polygons is not None:
+        polygons = polygons.to_crs(epsg=4326)
+        polygons.plot(ax=ax, facecolor='none', edgecolor='white', linewidth=0.5)
+    
+    if crimes is not None:
+        crimes = crimes.to_crs(epsg=4326)
+        crimes.sample(1000).plot(ax=ax, color='#F2055C', markersize=5, alpha=0.6)
+    
+    """
+    KDE calculation
+    """
+    def calculate_kde(values_input):
+        """Helper function to calculate KDE for a given values array"""
+        # Get centroids of roads as the spatial locations
+        geometries = roads.to_crs(epsg=4326)
+        x_coords = geometries.centroid.x.values
+        y_coords = geometries.centroid.y.values
+        
+        # Calculate spatially-lagged values using the adjacency matrix
+        spatial_values = np.zeros(len(values_input))
+        for i in range(len(values_input)):
+            neighbors = np.where(adj_matrix[i] > 0)[0]
+            if len(neighbors) > 0:
+                spatial_values[i] = values_input[i] + np.sum(values_input[neighbors])
+            else:
+                spatial_values[i] = values_input[i]
+        
+        # Convert value to number of points
+        values_normalized = spatial_values - spatial_values.min()
+        values_normalized = values_normalized / values_normalized.max() * 100
+        
+        x_count = []
+        y_count = []
+        for i, (x, y, v) in enumerate(zip(x_coords, y_coords, values_normalized)):
+            n_points = max(1, int(v))
+            x_count.extend([x] * n_points)
+            y_count.extend([y] * n_points)
+        
+        # Perform Gaussian KDE on the weighted point cloud
+        positions = np.vstack([x_count, y_count])
+        kernel = gaussian_kde(positions, bw_method='scott')
+        
+        # Create a regular grid covering the city boundary
+        xmin, ymin, xmax, ymax = city_boundary.total_bounds
+        xx, yy = np.mgrid[xmin:xmax:spatial_resolution*1j, ymin:ymax:spatial_resolution*1j]
+        positions_grid = np.vstack([xx.ravel(), yy.ravel()])
+        density = np.reshape(kernel(positions_grid).T, xx.shape)
+        
+        # Mask density values outside city boundary
+        from shapely.geometry import Point
+        city_geom_buffered = city_boundary.buffer(0.00005).unary_union
+        xx_flat = xx.ravel()
+        yy_flat = yy.ravel()
+        grid_points = gpd.GeoDataFrame(
+            geometry=[Point(x, y) for x, y in zip(xx_flat, yy_flat)],
+            crs='EPSG:4326'
+        )
+        city_boundary_buffered = gpd.GeoDataFrame(
+            geometry=[city_geom_buffered],
+            crs='EPSG:4326'
+        )
+        points_in_city = gpd.sjoin(grid_points, city_boundary_buffered, predicate='within', how='left')
+        mask_flat = points_in_city.index_right.isna().values
+        mask = mask_flat.reshape(xx.shape)
+        density_masked = np.ma.masked_array(density, mask=mask)
+
+        return xx, yy, density_masked
+    
+    # Calculate KDE(s)
+    if is_difference_map:
+        xx, yy, density1 = calculate_kde(values1)
+        _, _, density2 = calculate_kde(values2)
+        density_diff = density2 - density1
+        density = density_diff
+    else:
+        xx, yy, density = calculate_kde(values)
+    
+    """
+    Visualization
+    """
+    if is_difference_map:
+        # Use diverging colormap for difference map
+        cmap = 'RdBu_r'  # Red for increase, Blue for decrease
+        
+        # Center colormap at zero
+        vmax = np.abs(density_diff).max()
+        vmin = -vmax
+        
+        contour = ax.contourf(xx, yy, density_diff, levels=n_layers, 
+                             cmap=cmap, alpha=0.6, zorder=1, 
+                             vmin=vmin, vmax=vmax)
+        
+        cbar = plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label('Crime density change', 
+                      rotation=270, labelpad=25, fontsize=18)
+        
+        # Optional: Add zero contour line to show boundary between increase/decrease
+        ax.contour(xx, yy, density_diff, levels=[0], colors='black', 
+                  linewidths=1.5, linestyles='--', alpha=0.5)
+    else:
+        # Original colormap for single density map
+        colors = ['white', '#FFE6E6', '#FF9999', '#FF4444', '#CC0000', '#800000']
+        n_bins = 100
+        cmap = LinearSegmentedColormap.from_list('crime_density', colors, N=n_bins)
+        
+        contour = ax.contourf(xx, yy, density, levels=n_layers, cmap=cmap, alpha=0.6, zorder=1)
+        cbar = plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label('Crime density', rotation=270, labelpad=20, fontsize=18)
+    
+    # Show
+    ax.set_axis_off()
+    xmin, ymin, xmax, ymax = city_boundary.total_bounds
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    plt.tight_layout(pad=.5)
+    
+    if save_path is None:
+        plt.show()
+    else:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+
+        

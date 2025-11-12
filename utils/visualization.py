@@ -190,13 +190,13 @@ def scatter_crime_pred_metrics(
 
 def density_crime_map(
     values, adj_matrix, city_b, roads, polygons, crimes=None,
-    spatial_resolution=200, n_layers=20, save_path=None
+    spatial_resolution=100, n_layers=20, save_path=None
 ):
     import geopandas as gpd
     import numpy as np
     from scipy.stats import gaussian_kde
     from matplotlib.colors import LinearSegmentedColormap
-    
+
     # Check if values is a list of two arrays for difference mapping
     is_difference_map = isinstance(values, list)
     if is_difference_map:
@@ -270,7 +270,7 @@ def density_crime_map(
         
         # Mask density values outside city boundary
         from shapely.geometry import Point
-        city_geom_buffered = city_boundary.buffer(0.00005).unary_union
+        city_geom_buffered = city_boundary.buffer(0.0011).unary_union
         xx_flat = xx.ravel()
         yy_flat = yy.ravel()
         grid_points = gpd.GeoDataFrame(
@@ -314,7 +314,7 @@ def density_crime_map(
         
         cbar = plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.02)
         cbar.set_label('Crime density change', 
-                      rotation=270, labelpad=25, fontsize=18)
+                      rotation=270, labelpad=25, fontsize=22)
         
         # Optional: Add zero contour line to show boundary between increase/decrease
         ax.contour(xx, yy, density_diff, levels=[0], colors='black', 
@@ -327,18 +327,19 @@ def density_crime_map(
         
         contour = ax.contourf(xx, yy, density, levels=n_layers, cmap=cmap, alpha=0.6, zorder=1)
         cbar = plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.02)
-        cbar.set_label('Crime density', rotation=270, labelpad=20, fontsize=18)
+        cbar.set_label('Crime density', rotation=270, labelpad=20, fontsize=22)
     
     # Show
     ax.set_axis_off()
     xmin, ymin, xmax, ymax = city_boundary.total_bounds
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    plt.tight_layout(pad=.5)
     
     if save_path is None:
+        plt.tight_layout(pad=.5)
         plt.show()
     else:
         fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
 
         

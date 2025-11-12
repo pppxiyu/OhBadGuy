@@ -3,6 +3,7 @@ from utils import data as dd
 from utils import evaluation as ev
 from utils import visualization as vis
 import model as mo
+import os
 
 # crime data
 crime_data = dd.CrimeData()
@@ -50,6 +51,16 @@ crime_pred = mo.CrimePred()
 crime_pred.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'graph', road_geo=road_data.road_lines)
 test_x_iterate = test_x.copy()
 test_y_iterate = test_y.copy()
+
+# # vis baseline static density map
+# vis.density_crime_map(
+#     ev.build_baseline_ave([train_x, val_x]).flatten(), crime_pred.adj_matrix,
+#     dir_city_boundary, 
+#     roads=road_data.road_lines.copy(),
+#     polygons=crime_data.polygon.copy(),
+#     spatial_resolution=100, n_layers=40, save_path=f'{dir_figs}/density_map_static.png'
+# )
+
 for i in range(test_x.shape[0] - 1):
     i += 1
     train_x, train_y, val_x, val_y, test_x_iterate, test_y_iterate = dd.shift_samples_test_2_train(
@@ -60,31 +71,26 @@ for i in range(test_x.shape[0] - 1):
     metrics_ml.append(ev.cal_metrics(pred[0, :, :], true[0, :, :], 'ml', adj_matrix=crime_pred.adj_matrix))
     metrics_naive.append(ev.cal_metrics(ev.build_baseline_ave([train_x, val_x]), true[0, :, :], 'naive', adj_matrix=crime_pred.adj_matrix))
 
-    # vis: dynamics vs static density map
-    if i in [8]:
-        vis.density_crime_map(
-            [ev.build_baseline_ave([train_x, val_x]).flatten(), pred[0, :, :].flatten()], 
-            crime_pred.adj_matrix,
-            dir_city_boundary, 
-            roads=road_data.road_lines.copy(),
-            polygons=crime_data.polygon.copy(),
-            spatial_resolution=200, n_layers=40
-        )
-        vis.density_crime_map(
-            pred[0, :, :].flatten(), crime_pred.adj_matrix,
-            dir_city_boundary, 
-            roads=road_data.road_lines.copy(),
-            polygons=crime_data.polygon.copy(),
-            spatial_resolution=200, n_layers=40
-        )
-        vis.density_crime_map(
-            ev.build_baseline_ave([train_x, val_x]).flatten(), crime_pred.adj_matrix,
-            dir_city_boundary, 
-            roads=road_data.road_lines.copy(),
-            polygons=crime_data.polygon.copy(),
-            spatial_resolution=200, n_layers=40
-        )
-
+    # # vis: dynamics vs static density map
+    # if i in [1, 8, 14]:
+    #     folder_path = f"{dir_figs}/density_map_diff"
+    #     os.makedirs(folder_path, exist_ok=True)
+    #     vis.density_crime_map(
+    #         [ev.build_baseline_ave([train_x, val_x]).flatten(), pred[0, :, :].flatten()], 
+    #         crime_pred.adj_matrix,
+    #         dir_city_boundary, 
+    #         roads=road_data.road_lines.copy(),
+    #         polygons=crime_data.polygon.copy(),
+    #         spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_dynamic_{i}.png'
+    #     )
+    #     vis.density_crime_map(
+    #         [ev.build_baseline_ave([train_x, val_x]).flatten(), true[0, :, :].flatten()], 
+    #         crime_pred.adj_matrix,
+    #         dir_city_boundary, 
+    #         roads=road_data.road_lines.copy(),
+    #         polygons=crime_data.polygon.copy(),
+    #         spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_static_{i}.png'
+    #     )
 
     # # cam placement
     # sim = mo.SensorPlacement(

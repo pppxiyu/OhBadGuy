@@ -109,7 +109,7 @@ def map_city_roads_polygon_crime(city_b, roads=None, polygons=None, crimes=None,
 def scatter_crime_pred_metrics(
         metric_list_1, metric_list_2,
         group_labels=('Dynamic','Static'), y_label='Metric value', annotate=False,
-        stats_test='mannwhitneyu', alternative=None, save_path=None
+        stats_test='mannwhitneyu', alternative=None, save_path=None, if_percentile=False
 ):
     import numpy as np
     from scipy import stats
@@ -190,7 +190,7 @@ def scatter_crime_pred_metrics(
 
 def density_crime_map(
     values, adj_matrix, city_b, roads, polygons, crimes=None,
-    spatial_resolution=100, n_layers=20, save_path=None
+    spatial_resolution=100, n_layers=20, save_path=None, power_transform=1, 
 ):
     import geopandas as gpd
     import numpy as np
@@ -319,13 +319,19 @@ def density_crime_map(
         # Optional: Add zero contour line to show boundary between increase/decrease
         ax.contour(xx, yy, density_diff, levels=[0], colors='black', 
                   linewidths=1.5, linestyles='--', alpha=0.5)
+
     else:
+        # Apply power transformation if specified
+        density_transformed = np.power(density, power_transform)
+
         # Original colormap for single density map
         colors = ['white', '#FFE6E6', '#FF9999', '#FF4444', '#CC0000', '#800000']
         n_bins = 100
         cmap = LinearSegmentedColormap.from_list('crime_density', colors, N=n_bins)
-        
-        contour = ax.contourf(xx, yy, density, levels=n_layers, cmap=cmap, alpha=0.6, zorder=1)
+
+        contour = ax.contourf(
+            xx, yy, density_transformed, levels=n_layers, cmap=cmap, alpha=0.6, zorder=1,
+        )
         cbar = plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.02)
         cbar.set_label('Crime density', rotation=270, labelpad=20, fontsize=22)
     

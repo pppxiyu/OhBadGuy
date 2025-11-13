@@ -71,26 +71,38 @@ for i in range(test_x.shape[0] - 1):
     metrics_ml.append(ev.cal_metrics(pred[0, :, :], true[0, :, :], 'ml', adj_matrix=crime_pred.adj_matrix))
     metrics_naive.append(ev.cal_metrics(ev.build_baseline_ave([train_x, val_x]), true[0, :, :], 'naive', adj_matrix=crime_pred.adj_matrix))
 
-    # # vis: dynamics vs static density map
+    # vis: dynamics vs static density map /pred map 
     # if i in [1, 8, 14]:
-    #     folder_path = f"{dir_figs}/density_map_diff"
-    #     os.makedirs(folder_path, exist_ok=True)
-    #     vis.density_crime_map(
-    #         [ev.build_baseline_ave([train_x, val_x]).flatten(), pred[0, :, :].flatten()], 
-    #         crime_pred.adj_matrix,
-    #         dir_city_boundary, 
-    #         roads=road_data.road_lines.copy(),
-    #         polygons=crime_data.polygon.copy(),
-    #         spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_dynamic_{i}.png'
-    #     )
-    #     vis.density_crime_map(
-    #         [ev.build_baseline_ave([train_x, val_x]).flatten(), true[0, :, :].flatten()], 
-    #         crime_pred.adj_matrix,
-    #         dir_city_boundary, 
-    #         roads=road_data.road_lines.copy(),
-    #         polygons=crime_data.polygon.copy(),
-    #         spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_static_{i}.png'
-    #     )
+        # folder_path = f"{dir_figs}/density_map_diff"
+        # os.makedirs(folder_path, exist_ok=True)
+        # vis.density_crime_map(
+        #     [ev.build_baseline_ave([train_x, val_x]).flatten(), pred[0, :, :].flatten()], 
+        #     crime_pred.adj_matrix,
+        #     dir_city_boundary, 
+        #     roads=road_data.road_lines.copy(),
+        #     polygons=crime_data.polygon.copy(),
+        #     spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_dynamic_{i}.png'
+        # )
+        # vis.density_crime_map(
+        #     [ev.build_baseline_ave([train_x, val_x]).flatten(), true[0, :, :].flatten()], 
+        #     crime_pred.adj_matrix,
+        #     dir_city_boundary, 
+        #     roads=road_data.road_lines.copy(),
+        #     polygons=crime_data.polygon.copy(),
+        #     spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_static_{i}.png'
+        # )
+
+        # folder_path = f"{dir_figs}/density_map_pred"
+        # os.makedirs(folder_path, exist_ok=True)
+        # vis.density_crime_map(
+        #     pred[0, :, :].flatten(), 
+        #     crime_pred.adj_matrix,
+        #     dir_city_boundary, 
+        #     roads=road_data.road_lines.copy(),
+        #     polygons=crime_data.polygon.copy(),
+        #     spatial_resolution=100, save_path=f'{folder_path}/density_map_pred_{i}.png',
+        #     n_layers=10, power_transform=2,  # increase power and reduce layers to amplify the nuances 
+        # )
 
     # # cam placement
     # sim = mo.SensorPlacement(

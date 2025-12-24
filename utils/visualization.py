@@ -348,4 +348,89 @@ def density_crime_map(
         fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
         plt.close(fig)
 
-        
+
+def density_crime_map_sequence(
+    values, city_b, roads, polygons, crimes=None,
+    save_path=None, 
+):
+    import geopandas as gpd
+    import numpy as np
+    from scipy.stats import gaussian_kde
+    from matplotlib.colors import LinearSegmentedColormap
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    """
+    Base map
+    """
+    city_boundary = gpd.read_file(city_b)
+    city_boundary = city_boundary[city_boundary['NAME'] == 'Warner Robins']
+    city_boundary = city_boundary.to_crs(epsg=4326)
+    city_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='none')
+    
+    if roads is not None:
+        roads = roads.to_crs(epsg=4326)
+        roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+        roads_short.plot(ax=ax, color='#3C535B', linewidth=0.5)
+    
+    if polygons is not None:
+        polygons = polygons.to_crs(epsg=4326)
+        polygons.plot(ax=ax, facecolor='none', edgecolor='white', linewidth=1)
+    
+    if crimes is not None:
+        crimes = crimes.to_crs(epsg=4326)
+        crimes.sample(1000).plot(ax=ax, color='#F2055C', markersize=5, alpha=0.6)
+    
+    """
+    Visualization
+    """
+    # Parameter to control number of bins
+    n_bins = 6  # Adjust this value to control the number of color groups
+    
+    ranks = np.argsort(np.argsort(values))
+    percentiles = ranks / len(ranks) * 100
+    
+    # Define percentile bins
+    bins = np.linspace(0, 100, n_bins + 1)
+    
+    # Generate colors dynamically based on n_bins
+    base_colors = ['#FFFFFF', '#FFE5E5', '#FFB3B3', '#FF6B6B', '#E63946', '#8B0000']
+    if n_bins <= len(base_colors):
+        colors = base_colors[:n_bins]
+    else:
+        # Interpolate additional colors if n_bins > base colors
+        cmap = LinearSegmentedColormap.from_list('rank_cmap', base_colors)
+        colors = [cmap(i / (n_bins - 1)) for i in range(n_bins)]
+        colors = [plt.matplotlib.colors.rgb2hex(c) for c in colors]
+    
+    # Assign each polygon to a color group
+    color_groups = np.digitize(percentiles, bins) - 1
+    color_groups = np.clip(color_groups, 0, n_bins - 1)  # Ensure within range
+    polygons['color_group'] = [colors[i] for i in color_groups]
+    
+    polygons.plot(ax=ax, color=polygons['color_group'], 
+                  edgecolor='gray', linewidth=0.3, legend=False, alpha=0.75)
+    
+    # Re-plot roads and polygon edges on top
+    if roads is not None:
+        roads_short.plot(ax=ax, color='#808080', linewidth=.5, zorder=3)
+    
+    if polygons is not None:
+        polygons.plot(ax=ax, facecolor='none', edgecolor='#D3D3D3', linewidth=.5, zorder=2)
+
+    # Show
+    ax.set_axis_off()
+    xmin, ymin, xmax, ymax = city_boundary.total_bounds
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    
+    if save_path is None:
+        plt.tight_layout(pad=.5)
+        plt.show()
+    else:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)     
+
+
+
+

@@ -100,8 +100,16 @@ for i in range(test_x.shape[0] - 1):
         #     dir_city_boundary, 
         #     roads=road_data.road_lines.copy(),
         #     polygons=crime_data.polygon.copy(),
-        #     spatial_resolution=100, save_path=f'{folder_path}/density_map_pred_{i}.png',
+        #     spatial_resolution=100, 
+        #     save_path=f'{folder_path}/density_map_pred_{i}.png',
         #     n_layers=10, power_transform=2,  # increase power and reduce layers to amplify the nuances 
+        # )
+        # vis.density_crime_map_sequence(
+        #     pred[0, :, :].flatten(), 
+        #     dir_city_boundary, 
+        #     roads=road_data.road_lines.copy(),
+        #     polygons=crime_data.polygon.copy(),
+        #     save_path=f'{folder_path}/density_map_pred_sequence_{i}.png',
         # )
 
     # # cam placement

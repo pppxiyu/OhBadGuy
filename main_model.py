@@ -1,7 +1,7 @@
 from config import *
 from utils import data as dd
-from utils import evaluation as ev
-from utils import visualization as vis
+from utils import eval as ev
+from utils import vis
 import model as mo
 import os
 
@@ -21,11 +21,11 @@ road_data.connect_line()
 road_data.get_pop_on_roads(dir_local_population, dir_thi_polygon)
 road_data.convert_roads_2_network()
 
-# # hyper-param tuning (close after fine-tuning)
-# crime_pred_tuner = mo.CrimePredTuner(model_name='GConvGRU', model_save=dir_cache)
-# crime_pred_tuner.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'Queen')
-# crime_pred_tuner.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
-# crime_pred_tuner.run_study()
+# hyper-param tuning (close after fine-tuning)
+crime_pred_tuner = mo.CrimePredTuner(model_name='GConvGRU_NoConv', model_save=dir_cache)
+crime_pred_tuner.build_adj_from_polygons(crime_data.polygon.to_crs('EPSG:4326'), 'graph', road_geo=road_data.road_lines)
+crime_pred_tuner.build_dataset(train_x, train_y, val_x, val_y, test_x, test_y)
+crime_pred_tuner.run_study()
 
 # # train model recursively (close during tests, models have been cached)
 # crime_pred = mo.CrimePred()
@@ -41,8 +41,8 @@ road_data.convert_roads_2_network()
 #     for _ in range(20):
 #         crime_pred.build_dataset(train_x, train_y, val_x, val_y, test_x_iterate, test_y_iterate)
 #         crime_pred.build_model(1, 1, model_name='GConvGRU', K=gnn_k)
-#         crime_pred.train_model(8, 0.005, 100, dir_cache, test_loc=i)
-#         # crime_pred.train_model(8, 0.003, 100, dir_cache, test_loc=i)
+#         crime_pred.train_model(8, 0.005, 100, dir_cache, test_loc=i)  # full model
+#         # crime_pred.train_model(8, 0.003, 100, dir_cache, test_loc=i)  # full model
 
 # record recursively
 metrics_ml = []
@@ -112,13 +112,14 @@ for i in range(test_x.shape[0] - 1):
         #     save_path=f'{folder_path}/density_map_pred_sequence_{i}.png',
         # )
 
-    # # cam placement
-    # sim = mo.SensorPlacement(
-    #     crime_pred.convert_pred_2_int(pred, crime_pred.test_dataset.mean_max_x),
-    #     road_data.road_lines, road_data.road_network, sim_iteration_num, sim_random_seed
-    # )
-    # sim.run_sim()
-    # sim.place_multiple_cameras(cam_count=sim_cam_num)  # pre_located_cam=sim_pre_located_cam
+    if i in [1, 8, 14]:
+        # cam placement
+        sim = mo.SensorPlacement(
+            crime_pred.convert_pred_2_int(pred, crime_pred.test_dataset.mean_max_x),
+            road_data.road_lines, road_data.road_network, sim_iteration_num, sim_random_seed
+        )
+        sim.run_sim()
+        sim.place_multiple_cameras(cam_count=sim_cam_num)  # pre_located_cam=sim_pre_located_cam
 
 # vis: metrics and metrics scatter
 ev.aggr_metrics(metrics_ml, 'ml')

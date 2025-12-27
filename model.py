@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn as nn
 import torch_geometric as pyG
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import ChebConv
@@ -173,6 +174,10 @@ class CrimePred:
             self.model = ResTGCN(in_channels=in_channels, out_channels=out_channels, ).to(self.device)
         elif model_name == 'GConvGRU':
             self.model = ResGConvGRU(in_channels=in_channels, out_channels=out_channels, K=kwargs['K']).to(self.device)
+        elif model_name == 'GConvGRU_NoRes':
+            self.model = GConvGRU(in_channels=in_channels, out_channels=out_channels, K=kwargs['K']).to(self.device)
+        elif model_name == 'GConvGRU_NoConv':
+            self.model = ResGRU(in_channels=in_channels, out_channels=out_channels,).to(self.device)
         else:
             raise NotImplementedError
         self.readout = torch.nn.Sequential(
@@ -204,7 +209,7 @@ class CrimePred:
         temporal_batchdata = [next(iter(loader)) for loader in temporal_dataloader]
         return temporal_batchdata  # a list of BatchData
 
-    def train_model(self, batch_size=32, lr=0.001, epoch=1000, dir_cache='./', test_loc=''):
+    def train_model(self, batch_size=32, lr=0.001, epoch=1000, dir_cache='./', test_loc=999):
         import os
         from torch.utils.data import DataLoader
         train_dataloader = DataLoader(
@@ -562,6 +567,212 @@ class ResGConvGRU(torch.nn.Module):
         return H
 
 
+class GConvGRU(torch.nn.Module):
+    r"""
+    A downgraded version of ResGConvGRU without residual connections.
+    """
+
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            K: int,
+            normalization: str = "sym",
+            bias: bool = True,
+    ):
+        super(GConvGRU, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.K = K
+        self.normalization = normalization
+        self.bias = bias
+        self._create_parameters_and_layers()
+
+    def _create_update_gate_parameters_and_layers(self):
+        self.conv_x_z = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+        self.conv_h_z = ChebConv(
+            in_channels=self.out_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+    def _create_reset_gate_parameters_and_layers(self):
+        self.conv_x_r = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+        self.conv_h_r = ChebConv(
+            in_channels=self.out_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+    def _create_candidate_state_parameters_and_layers(self):
+        self.conv_x_h = ChebConv(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+        self.conv_h_h = ChebConv(
+            in_channels=self.out_channels,
+            out_channels=self.out_channels,
+            K=self.K,
+            normalization=self.normalization,
+            bias=self.bias,
+        )
+
+    def _create_parameters_and_layers(self):
+        self._create_update_gate_parameters_and_layers()
+        self._create_reset_gate_parameters_and_layers()
+        self._create_candidate_state_parameters_and_layers()
+
+    def _set_hidden_state(self, X, H):
+        if H is None:
+            H = torch.zeros(X.shape[0], self.out_channels).to(X.device)
+        return H
+
+    def _calculate_update_gate(self, X, edge_index, edge_weight, H, lambda_max):
+        Z = self.conv_x_z(X, edge_index, edge_weight, lambda_max=lambda_max)
+        Z = Z + self.conv_h_z(H, edge_index, edge_weight, lambda_max=lambda_max)
+        Z = torch.sigmoid(Z)
+        return Z
+
+    def _calculate_reset_gate(self, X, edge_index, edge_weight, H, lambda_max):
+        R = self.conv_x_r(X, edge_index, edge_weight, lambda_max=lambda_max)
+        R = R + self.conv_h_r(H, edge_index, edge_weight, lambda_max=lambda_max)
+        R = torch.sigmoid(R)
+        return R
+
+    def _calculate_candidate_state(self, X, edge_index, edge_weight, H, R, lambda_max):
+        H_tilde = self.conv_x_h(X, edge_index, edge_weight, lambda_max=lambda_max)
+        H_tilde = H_tilde + self.conv_h_h(H * R, edge_index, edge_weight, lambda_max=lambda_max)
+        H_tilde = torch.tanh(H_tilde)
+        # H_tilde_1 = self.conv_x_h(X, edge_index, edge_weight, lambda_max=lambda_max)
+        # H_tilde_2 = self.conv_h_h(H * R, edge_index, edge_weight, lambda_max=lambda_max)
+        # H_tilde = H_tilde_1 + H_tilde_2
+        # H_tilde = torch.tanh(H_tilde) + H_tilde_1 + H_tilde_2
+        return H_tilde
+
+    def _calculate_hidden_state(self, Z, H, H_tilde):
+        H = Z * H + (1 - Z) * H_tilde
+        return H
+
+    def forward(
+            self,
+            X: torch.FloatTensor,
+            edge_index: torch.LongTensor,
+            edge_weight: torch.FloatTensor = None,
+            H: torch.FloatTensor = None,
+            lambda_max: torch.Tensor = None,
+    ) -> torch.FloatTensor:
+        H = self._set_hidden_state(X, H)
+        Z = self._calculate_update_gate(X, edge_index, edge_weight, H, lambda_max)
+        R = self._calculate_reset_gate(X, edge_index, edge_weight, H, lambda_max)
+        H_tilde = self._calculate_candidate_state(X, edge_index, edge_weight, H, R, lambda_max)
+        H = self._calculate_hidden_state(Z, H, H_tilde)
+        return H
+
+
+class ResGRU(torch.nn.Module):
+    r"""
+    A downgraded version of ResGConvGRU without graph convolutions.
+    """
+
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            normalization: str = "sym",
+            bias: bool = True,
+    ):
+        super(ResGRU, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.normalization = normalization
+        self.bias = bias
+        self._create_parameters_and_layers()
+
+    def _create_update_gate_parameters_and_layers(self):
+        self.conv_x_z = nn.Linear(self.in_channels, self.out_channels, bias=self.bias)
+        self.conv_h_z = nn.Linear(self.out_channels, self.out_channels, bias=self.bias)
+
+    def _create_reset_gate_parameters_and_layers(self):
+        self.conv_x_r = nn.Linear(self.in_channels, self.out_channels, bias=self.bias)
+        self.conv_h_r = nn.Linear(self.out_channels, self.out_channels, bias=self.bias)
+
+    def _create_candidate_state_parameters_and_layers(self):
+        self.conv_x_h = nn.Linear(self.in_channels, self.out_channels, bias=self.bias)
+        self.conv_h_h = nn.Linear(self.out_channels, self.out_channels, bias=self.bias)
+
+    def _create_parameters_and_layers(self):
+        self._create_update_gate_parameters_and_layers()
+        self._create_reset_gate_parameters_and_layers()
+        self._create_candidate_state_parameters_and_layers()
+
+    def _set_hidden_state(self, X, H):
+        if H is None:
+            H = torch.zeros(X.shape[0], self.out_channels).to(X.device)
+        return H
+
+    def _calculate_update_gate(self, X, H,):
+        Z = self.conv_x_z(X,)
+        Z = Z + self.conv_h_z(H,)
+        Z = torch.sigmoid(Z)
+        return Z
+
+    def _calculate_reset_gate(self, X, H,):
+        R = self.conv_x_r(X,)
+        R = R + self.conv_h_r(H,)
+        R = torch.sigmoid(R)
+        return R
+
+    def _calculate_candidate_state(self, X, H, R,):
+        H_tilde_1 = self.conv_x_h(X,)
+        H_tilde_2 = self.conv_h_h(H * R,)
+        H_tilde = H_tilde_1 + H_tilde_2
+        H_tilde = torch.tanh(H_tilde) + H_tilde_1 + H_tilde_2
+        return H_tilde
+
+    def _calculate_hidden_state(self, Z, H, H_tilde):
+        H = Z * H + (1 - Z) * H_tilde
+        return H
+
+    def forward(
+            self,
+            X: torch.FloatTensor,
+            edge_index: torch.LongTensor,
+            edge_weight: torch.FloatTensor = None,
+            H: torch.FloatTensor = None,
+            lambda_max: torch.Tensor = None,
+    ) -> torch.FloatTensor:
+        H = self._set_hidden_state(X, H)
+        Z = self._calculate_update_gate(X, H,)
+        R = self._calculate_reset_gate(X, H,)
+        H_tilde = self._calculate_candidate_state(X, H, R,)
+        H = self._calculate_hidden_state(Z, H, H_tilde)
+        return H
+
+
 class CrimePredTuner(CrimePred):
     def __init__(self, model_name, storage_path="sqlite:///optuna_study.db", model_save='./'):
         import datetime
@@ -581,9 +792,18 @@ class CrimePredTuner(CrimePred):
             lr = trial.suggest_float("lr", 1e-3, 1e-2, log=True)
             K = trial.suggest_int("K", 1, 3)
             self.build_model(1, 1, model_name=self.model_name, K=K)
+        elif self.model_name == 'GConvGRU_NoRes':
+            batch_size = 8  # trial.suggest_categorical("batch_size", [8, 16])
+            lr = trial.suggest_float("lr", 1e-3, 1e-1, log=True)
+            K = trial.suggest_int("K", 1, 3)
+            self.build_model(1, 1, model_name=self.model_name, K=K)
+        elif self.model_name == 'GConvGRU_NoConv':
+            batch_size = 8  # trial.suggest_categorical("batch_size", [8, 16])
+            lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+            self.build_model(1, 1, model_name=self.model_name,)
         else:
             raise NotImplementedError
-        val_loss = self.train_model(batch_size=batch_size, lr=lr, dir_cache=self.model_save)
+        val_loss = self.train_model(batch_size=batch_size, lr=lr, dir_cache=self.model_save, test_loc=999)
         return val_loss
 
     def run_study(self, n_trials=50, ):

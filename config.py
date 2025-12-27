@@ -18,7 +18,7 @@ dir_local_population = './data/populationDist.shp'
 
 dir_city_boundary = './data/census/Municipal Boundaries.json'
 
-dir_cache = './cache/cache_20251108'
+dir_cache = './cache/cache_noConvModel_20251226'
 
 sim_iteration_num = 2
 sim_random_seed = 10

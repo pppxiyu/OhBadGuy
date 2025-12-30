@@ -432,5 +432,181 @@ def density_crime_map_sequence(
         plt.close(fig)     
 
 
+def line_marginal_gain_centrality(scores, save_path=None):
+    """
+    Plot marginal gain and cumulative gain of centrality scores
+    """
+    import numpy as np
+
+    # Calculate marginal gains (the scores themselves are marginal gains)
+    marginal_gains = scores
+    
+    # Calculate cumulative gains
+    cumulative_gains = np.cumsum(scores)
+    
+    # Number of sensors
+    n_sensors = np.arange(1, len(scores) + 1)
+    
+    # Create figure and primary axis - wider for more space
+    fig, ax1 = plt.subplots(figsize=(7, 2.5))
+    
+    # Plot marginal gain on left y-axis (slightly stronger red)
+    color_marginal = '#E53935'  # Slightly stronger red
+    ax1.set_xlabel('Number of Sensors', fontsize=14, color='black')
+    ax1.set_ylabel('Marginal Gain\nof Centrality', fontsize=14, color='black')
+    line1 = ax1.plot(n_sensors, marginal_gains, color=color_marginal, 
+                     marker='o', markersize=5, linewidth=2.5)
+    ax1.tick_params(axis='y', labelcolor='black', labelsize=12)
+    ax1.tick_params(axis='x', labelsize=12)
+    
+    # Set y-axis limits with margin above max value
+    max_marginal = max(marginal_gains)
+    ax1.set_ylim(bottom=0, top=max_marginal * 1.1)
+    ax1.locator_params(axis='y', nbins=6)
+    
+    # Set x-axis to show all integer values
+    ax1.set_xticks(n_sensors)
+    
+    # Create secondary y-axis for cumulative gain
+    ax2 = ax1.twinx()
+    color_cumulative = '#7E57C2'  # Slightly stronger purple
+    ax2.set_ylabel('Cumulative Gain\nof Centrality', fontsize=14, color='black')
+    line2 = ax2.plot(n_sensors, cumulative_gains, color=color_cumulative, 
+                     marker='s', markersize=5, linewidth=2.5)
+    ax2.tick_params(axis='y', labelcolor='black', labelsize=12)
+    
+    # Set y-axis limits with margin above max value
+    max_cumulative = max(cumulative_gains)
+    ax2.set_ylim(bottom=0, top=max_cumulative * 1.1)
+    ax2.locator_params(axis='y', nbins=6)
+    
+    # Add box boundary
+    for spine in ax1.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.2)
+    
+    if save_path is None:
+        plt.tight_layout(pad=.5)
+        plt.show()
+    else:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
 
 
+def map_placement(
+    placement_placed, values, city_b, roads, polygons, draw_polygon=False,
+    save_path=None, 
+    placement_candidate=None,
+):
+    import geopandas as gpd
+    import numpy as np
+    from scipy.stats import gaussian_kde
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    """
+    Base map
+    """
+    city_boundary = gpd.read_file(city_b)
+    city_boundary = city_boundary[city_boundary['NAME'] == 'Warner Robins']
+    city_boundary = city_boundary.to_crs(epsg=4326)
+    city_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='none')
+    
+    if roads is not None:
+        roads = roads.to_crs(epsg=4326)
+        roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+        roads_short.plot(ax=ax, color='#3C535B', linewidth=1.5)
+    
+    if draw_polygon and polygons is not None:
+        polygons = polygons.to_crs(epsg=4326)
+        polygons.plot(ax=ax, facecolor='none', edgecolor='white', linewidth=1)
+    if draw_polygon:
+        # Parameter to control number of bins
+        n_bins = 6  # Adjust this value to control the number of color groups
+        
+        ranks = np.argsort(np.argsort(values))
+        percentiles = ranks / len(ranks) * 100
+        
+        # Define percentile bins
+        bins = np.linspace(0, 100, n_bins + 1)
+        
+        # Generate colors dynamically based on n_bins
+        base_colors = ['#FFFFFF', '#FFE5E5', '#FFB3B3', '#FF6B6B', '#E63946', '#8B0000']
+        if n_bins <= len(base_colors):
+            colors = base_colors[:n_bins]
+        else:
+            # Interpolate additional colors if n_bins > base colors
+            cmap = LinearSegmentedColormap.from_list('rank_cmap', base_colors)
+            colors = [cmap(i / (n_bins - 1)) for i in range(n_bins)]
+            colors = [plt.matplotlib.colors.rgb2hex(c) for c in colors]
+        
+        # Assign each polygon to a color group
+        color_groups = np.digitize(percentiles, bins) - 1
+        color_groups = np.clip(color_groups, 0, n_bins - 1)  # Ensure within range
+        polygons['color_group'] = [colors[i] for i in color_groups]
+        
+        polygons.plot(ax=ax, color=polygons['color_group'], 
+                    edgecolor='none', linewidth=0, legend=False, alpha=0.75)
+        
+        # Re-plot roads on top
+        if roads is not None:
+            roads_short.plot(ax=ax, color='#808080', linewidth=.5, zorder=3)
+    
+    """
+    Add candidate placement dots (behind placed dots)
+    """
+    if placement_candidate is not None:
+        # Filter roads to only those in the candidate placement list
+        candidate_roads = roads[roads['id'].isin(placement_candidate)]
+        
+        # Get the centroids of the selected roads
+        candidate_points = candidate_roads.geometry.centroid
+        
+        # Plot the candidate placement locations with blue color
+        candidate_points.plot(ax=ax, color='#4A90E2', markersize=200, 
+                             edgecolor='white', linewidth=2, 
+                             zorder=4, alpha=0.9)
+    
+    """
+    Add placed placement dots (on top)
+    """
+    # Filter roads to only those in the placement list
+    placement_roads = roads[roads['id'].isin(placement_placed)]
+    
+    # Get the centroids of the selected roads
+    placement_points = placement_roads.geometry.centroid
+    
+    # Plot the placement locations as larger dots with red color
+    placement_points.plot(ax=ax, color='#E63946', markersize=200, 
+                         edgecolor='white', linewidth=2, 
+                         zorder=5, alpha=0.9)
+    
+    """
+    Add legend
+    """
+    legend_elements = []
+    if placement_candidate is not None:
+        legend_elements.append(Line2D([0], [0], marker='o', color='w', 
+                                     markerfacecolor='#4A90E2', markersize=10,
+                                     markeredgecolor='white', markeredgewidth=1.5,
+                                     label='Candidate location'))
+    legend_elements.append(Line2D([0], [0], marker='o', color='w', 
+                                 markerfacecolor='#E63946', markersize=10,
+                                 markeredgecolor='white', markeredgewidth=1.5,
+                                 label='Selected location'))
+    
+    ax.legend(handles=legend_elements, loc='lower left', frameon=False, fontsize=18)
+    
+    # Show
+    ax.set_axis_off()
+    xmin, ymin, xmax, ymax = city_boundary.total_bounds
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    
+    if save_path is None:
+        plt.tight_layout(pad=.5)
+        plt.show()
+    else:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)

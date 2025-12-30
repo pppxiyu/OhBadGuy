@@ -7,6 +7,9 @@ from torch_geometric.nn import ChebConv
 import random
 import networkx as nx
 
+import heapq
+from collections import defaultdict
+from typing import Dict, List, Tuple
 
 class CrimeTorchDataset(torch.utils.data.Dataset):
     def __init__(self, x, y, standardize=False):
@@ -816,7 +819,7 @@ class CrimePredTuner(CrimePred):
         return study.best_params
 
 
-class SensorPlacement:
+class SensorPlacement_legacy:
     def __init__(self, crime, road_data, road_graph, sim_iter, random_seed):
         self.crime = crime
         self.crime_loc = self.build_start_points(crime)
@@ -1068,3 +1071,456 @@ class SensorPlacement:
         if verbose > 0:
             print(layout)
         return layout
+
+
+import heapq
+from collections import defaultdict
+from typing import Dict, List
+
+class WeightedBetweennessCentrality:
+    def __init__(self, graph: nx.Graph, 
+                 p_start: Dict, 
+                 p_end: Dict,
+                 weight: str = 'weight'):
+        """
+        Initialize the weighted betweenness centrality calculator for NetworkX graphs.
+        
+        Parameters:
+        -----------
+        graph : nx.Graph or nx.DiGraph
+            NetworkX graph object with weighted edges
+        p_start : dict
+            Probability that a path starts at each node.
+            Key: node, Value: probability
+        p_end : dict
+            Probability that a path ends at each node.
+            Key: node, Value: probability
+        weight : str, optional
+            Name of the edge attribute to use as weight (default: 'weight')
+        """
+        self.graph = graph
+        self.p_start = p_start
+        self.p_end = p_end
+        self.weight_attr = weight
+        self.nodes = set(graph.nodes())
+        self.betweenness = {node: 0.0 for node in self.nodes}
+        self.excluded_nodes = None
+    
+    def set_excluded_nodes(self, excluded_nodes: List):
+        """
+        Set the list of nodes to be excluded from the betweenness calculation.
+        
+        Parameters:
+        -----------
+        excluded_nodes : list
+            List of nodes to exclude
+        """
+        self.excluded_nodes = set(excluded_nodes)
+
+    def _dijkstra_shortest_paths(self, source):
+        """
+        Run Dijkstra's algorithm from source to find shortest paths.
+        
+        Returns:
+        --------
+        dist : dict
+            Shortest distance from source to each node
+        sigma : dict
+            Number of shortest paths from source to each node
+        pred : dict
+            List of predecessors for each node on shortest paths
+        """
+        dist = {node: float('inf') for node in self.nodes}
+        sigma = {node: 0 for node in self.nodes}
+        pred = {node: [] for node in self.nodes}
+        
+        dist[source] = 0
+        sigma[source] = 1
+        
+        # Priority queue: (distance, node)
+        pq = [(0, source)]
+        visited = set()
+        
+        while pq:
+            d, u = heapq.heappop(pq)
+            
+            if u in visited:
+                continue
+            visited.add(u)
+            
+            # Explore neighbors
+            for v in self.graph.neighbors(u):
+                # Get edge weight
+                edge_data = self.graph.get_edge_data(u, v)
+                edge_weight = edge_data.get(self.weight_attr, 1.0) if edge_data else 1.0
+                
+                # Calculate distance to v through u
+                alt_dist = dist[u] + edge_weight
+                
+                if alt_dist < dist[v]:
+                    # Found a shorter path to v
+                    dist[v] = alt_dist
+                    sigma[v] = sigma[u]
+                    pred[v] = [u]
+                    heapq.heappush(pq, (alt_dist, v))
+                
+                elif alt_dist == dist[v]:
+                    # Found another shortest path to v
+                    sigma[v] += sigma[u]
+                    pred[v].append(u)
+        
+        return dist, sigma, pred
+    
+    def calculate(self) -> Dict:
+        """
+        Calculate weighted betweenness centrality for all nodes using a modified Brandes algorithm.
+        
+        Algorithm:
+        ----------
+        For each source node s in the graph:
+        
+        1. Single-Source Shortest Paths (Forward Pass):
+           - Run Dijkstra's algorithm from s to find:
+             * dist[w]: shortest distance from s to each node w
+             * sigma[w]: number of shortest paths from s to w
+             * pred[w]: list of predecessor nodes of w on shortest paths from s
+        
+        2. Dependency Accumulation (Backward Pass):
+           - Process nodes in reverse order of distance from s (farthest first)
+           - For each node w that could be a destination:
+             * Calculate contribution = P_start[s] × P_end[w]
+             * This weights the importance of paths from s to w
+           - Propagate contributions backward along shortest paths:
+             * For each predecessor u of w:
+               * Accumulate delta[u] += (sigma[u] / sigma[w]) × (contribution + delta[w])
+             * The ratio sigma[u]/sigma[w] represents the fraction of shortest paths
+               to w that pass through predecessor u
+        
+        3. Update Betweenness:
+           - Add delta[v] to the betweenness score of each node v (except source s)
+           - delta[v] captures all the weighted flow passing through v from source s
+        
+        The algorithm efficiently computes the weighted sum over all (s,t) pairs by
+        processing each source once and accumulating contributions in a single backward pass.
+        
+        Returns:
+        --------
+        betweenness : dict
+            Weighted betweenness centrality for each node
+        """
+        # Reset betweenness scores
+        self.betweenness = {node: 0.0 for node in self.nodes}
+        
+        # Step 2: Iterate over each source node
+        for s in self.nodes:
+            # Step 2a: Find all shortest paths from s
+            dist, sigma, pred = self._dijkstra_shortest_paths(s)
+            
+            # Step 2b: Backward accumulation
+            delta = {node: 0.0 for node in self.nodes}
+            
+            # Sort nodes by distance (farthest first)
+            nodes_by_dist = sorted(self.nodes, key=lambda x: dist[x], reverse=True)
+            
+            for w in nodes_by_dist:
+                if w != s and dist[w] != float('inf'):
+                    # Calculate contribution for this (s, w) pair
+                    contribution = self.p_start.get(s, 0) * self.p_end.get(w, 0)
+                    
+                    # Propagate to predecessors
+                    for u in pred[w]:
+                        if sigma[w] > 0:
+                            delta[u] += (sigma[u] / sigma[w]) * (contribution + delta[w])
+            
+            # Step 2c: Update betweenness scores
+            for v in self.nodes:
+                if v != s:
+                    self.betweenness[v] += delta[v]
+        
+        return self.betweenness
+
+    def calculate_w_exclusion(self) -> Dict:
+        """
+        Calculate weighted betweenness centrality for all nodes with excluded nodes.
+        Flows passing through any excluded node are disregarded.
+        
+        Algorithm:
+        ----------
+        For each source node s in the graph:
+        
+        1. Single-Source Shortest Paths (Forward Pass):
+        - Run Dijkstra's algorithm from s to find:
+            * dist[w]: shortest distance from s to each node w
+            * sigma[w]: number of shortest paths from s to w
+            * pred[w]: list of predecessor nodes of w on shortest paths from s
+        
+        2. Compute Valid Path Counts:
+        - For each node w, compute sigma_valid[w]:
+            * Number of shortest paths from s to w that do NOT pass through any excluded node
+        - Process nodes in increasing order of distance from s
+        - sigma_valid[w] = sum of sigma_valid[u] for all predecessors u not in excluded set
+        
+        3. Dependency Accumulation (Backward Pass):
+        - Process nodes in reverse order of distance from s (farthest first)
+        - For each node w that could be a destination (not excluded, has valid paths):
+            * Calculate contribution = P_start[s] × P_end[w] × (sigma_valid[w] / sigma[w])
+            * The ratio sigma_valid[w]/sigma[w] accounts for fraction of paths still valid
+        - Propagate contributions backward along valid shortest paths:
+            * For each predecessor u of w (not excluded):
+            * Accumulate delta[u] += (sigma_valid[u] / sigma_valid[w]) × (contribution + delta[w])
+            * Uses sigma_valid ratio to properly distribute flow among valid paths only
+        
+        4. Update Betweenness:
+        - Add delta[v] to betweenness score of each node v (except source and excluded nodes)
+        - Excluded nodes receive zero betweenness contribution
+        
+        Returns:
+        --------
+        betweenness : dict
+            Weighted betweenness centrality for each node, excluding flows through excluded nodes
+        """
+
+        assert self.excluded_nodes is not None, "Excluded nodes set must be defined before calling this method."
+
+        # Reset betweenness scores
+        self.betweenness = {node: 0.0 for node in self.nodes}
+        
+        # Step 2: Iterate over each source node
+        for s in self.nodes:
+            # Step 2a: Find all shortest paths from s
+            dist, sigma, pred = self._dijkstra_shortest_paths(s)
+            
+            # Step 2b: Compute valid path counts (paths not through excluded nodes)
+            sigma_valid = {node: 0 for node in self.nodes}
+            
+            # Sort nodes by distance (closest first for forward computation)
+            nodes_by_dist_asc = sorted(self.nodes, key=lambda x: dist[x])
+            
+            for w in nodes_by_dist_asc:
+                if w in self.excluded_nodes:
+                    sigma_valid[w] = 0
+                elif w == s:
+                    sigma_valid[w] = 1
+                elif dist[w] != float('inf'):
+                    # Sum sigma_valid from all predecessors not in excluded set
+                    sigma_valid[w] = sum(sigma_valid[u] for u in pred[w] 
+                                        if u not in self.excluded_nodes)
+            
+            # Step 2c: Backward accumulation
+            delta = {node: 0.0 for node in self.nodes}
+            
+            # Sort nodes by distance (farthest first for backward accumulation)
+            nodes_by_dist_desc = sorted(self.nodes, key=lambda x: dist[x], reverse=True)
+            
+            for w in nodes_by_dist_desc:
+                if w != s and w not in self.excluded_nodes and dist[w] != float('inf'):
+                    if sigma_valid[w] > 0:  # Only count if there are valid paths
+                        # Calculate contribution for this (s, w) pair
+                        # Scale by fraction of paths that are valid
+                        contribution = (self.p_start.get(s, 0) * self.p_end.get(w, 0) * 
+                                    sigma_valid[w] / sigma[w])
+                        
+                        # Propagate to predecessors
+                        for u in pred[w]:
+                            if u not in self.excluded_nodes and sigma_valid[w] > 0:
+                                delta[u] += (sigma_valid[u] / sigma_valid[w]) * (contribution + delta[w])
+            
+            # Step 2d: Update betweenness scores
+            for v in self.nodes:
+                if v != s and v not in self.excluded_nodes:
+                    self.betweenness[v] += delta[v]
+        
+        return self.betweenness
+
+    def get_betweenness(self) -> Dict:
+        """
+        Get the calculated betweenness centrality scores.
+        
+        Returns:
+        --------
+        betweenness : dict
+            Weighted betweenness centrality for each node
+        """
+        return self.betweenness
+    
+    def get_normalized_betweenness(self) -> Dict:
+        """
+        Get normalized betweenness centrality scores.
+        Normalizes by the sum of all probability pairs.
+        
+        Returns:
+        --------
+        normalized_betweenness : dict
+            Normalized weighted betweenness centrality for each node
+        """
+        # Calculate total possible weight
+        total_weight = sum(self.p_start.get(s, 0) * self.p_end.get(t, 0) 
+                          for s in self.nodes for t in self.nodes if s != t)
+        
+        if total_weight == 0:
+            return {node: 0.0 for node in self.nodes}
+        
+        return {node: score / total_weight 
+                for node, score in self.betweenness.items()}
+
+
+from typing import Set
+
+class SensorPlacement:
+    def __init__(self, 
+                 graph: nx.Graph,
+                 p_start: Dict,
+                 p_end: Dict,
+                 weight: str = 'weight'):
+        """
+        Initialize the sensor placement optimizer.
+        
+        Parameters:
+        -----------
+        graph : nx.Graph or nx.DiGraph
+            NetworkX graph object with weighted edges
+        p_start : dict
+            Probability that a path starts at each node.
+            Key: node, Value: probability
+        p_end : dict
+            Probability that a path ends at each node.
+            Key: node, Value: probability
+        weight : str, optional
+            Name of the edge attribute to use as weight (default: 'weight')
+        """
+        self.graph = graph
+        self.p_start = p_start
+        self.p_end = p_end
+        self.weight = weight
+        self.selected_sensors = []
+        self.iteration_scores = []
+        
+    def place_sensors(self, num_sensors: int, verbose: bool = True, get_iterations = False) -> List:
+        """
+        Greedily select sensor locations to maximize coverage.
+        
+        Algorithm:
+        ----------
+        1. Initialize empty exclusion set
+        2. For each iteration (up to num_sensors):
+           a. Calculate weighted betweenness centrality with current exclusions
+           b. Select node with highest centrality (that's not already selected)
+           c. Add selected node to exclusion set
+           d. Record the selection and its score
+        
+        Parameters:
+        -----------
+        num_sensors : int
+            Number of sensors to place
+        verbose : bool, optional
+            If True, print progress information (default: True)
+            
+        Returns:
+        --------
+        selected_sensors : list
+            List of selected sensor locations in order of selection
+        """
+        self.selected_sensors = []
+        self.iteration_scores = []
+        excluded_nodes = set()
+        
+        calculator = WeightedBetweennessCentrality(
+            self.graph, 
+            self.p_start, 
+            self.p_end, 
+            self.weight
+        )
+        
+        candidate_nodes_over_iterations = []
+        for iteration in range(num_sensors):
+            if verbose:
+                print(f"\n{'='*60}")
+                print(f"Iteration {iteration + 1}/{num_sensors}")
+                print(f"{'='*60}")
+            
+            # Set excluded nodes (previously selected sensors)
+            if excluded_nodes:
+                calculator.set_excluded_nodes(list(excluded_nodes))
+                betweenness = calculator.calculate_w_exclusion()
+            else:
+                # First iteration: no exclusions
+                betweenness = calculator.calculate()
+            
+            # Find node with highest centrality (excluding already selected)
+            available_nodes = {node: score for node, score in betweenness.items() 
+                             if node not in excluded_nodes}
+            
+            if not available_nodes:
+                if verbose:
+                    print("No more available nodes to select.")
+                break
+            
+            # Select node with maximum betweenness
+            best_node = max(available_nodes.items(), key=lambda x: x[1])
+            candidate_nodes = dict(sorted(
+                available_nodes.items(), key=lambda x: x[1], reverse=True
+                )[:num_sensors])
+            selected_node, selected_score = best_node
+            
+            # Record selection
+            self.selected_sensors.append(selected_node)
+            self.iteration_scores.append(selected_score)
+            excluded_nodes.add(selected_node)
+            candidate_nodes_over_iterations.append(candidate_nodes)
+            
+            if verbose:
+                print(f"Selected node: {selected_node}")
+                print(f"Betweenness score: {selected_score:.6f}")
+                print(f"Total sensors placed: {len(self.selected_sensors)}")
+        
+        if verbose:
+            print(f"\n{'='*60}")
+            print("Sensor Placement Complete")
+            print(f"{'='*60}")
+            print(f"Selected sensors (in order): {self.selected_sensors}")
+            print(f"Scores: {[f'{s:.6f}' for s in self.iteration_scores]}")
+        
+        if get_iterations:
+            return self.selected_sensors, candidate_nodes_over_iterations
+        return self.selected_sensors
+    
+    def get_selected_sensors(self) -> List:
+        """
+        Get the list of selected sensor locations.
+        
+        Returns:
+        --------
+        selected_sensors : list
+            List of selected sensor locations in order of selection
+        """
+        return self.selected_sensors
+    
+    def get_iteration_scores(self) -> List:
+        """
+        Get the betweenness scores at each iteration.
+        
+        Returns:
+        --------
+        iteration_scores : list
+            List of betweenness scores for each selected sensor
+        """
+        return self.iteration_scores
+    
+    def get_summary(self) -> Dict:
+        """
+        Get a summary of the sensor placement results.
+        
+        Returns:
+        --------
+        summary : dict
+            Dictionary containing:
+            - 'sensors': list of selected sensors
+            - 'scores': list of scores at each iteration
+            - 'num_sensors': total number of sensors placed
+        """
+        return {
+            'sensors': self.selected_sensors,
+            'scores': self.iteration_scores,
+            'num_sensors': len(self.selected_sensors)
+        }
+

@@ -18,11 +18,13 @@ dir_local_population = './data/populationDist.shp'
 
 dir_city_boundary = './data/census/Municipal Boundaries.json'
 
-dir_cache = './cache/cache_noConvModel_20251226'
+dir_cache = './cache/cache_fullModel_20251108'
+model_name = 'GConvGRU'
 
+sensor_count = 10
 sim_iteration_num = 2
 sim_random_seed = 10
-sim_cam_num = 10
+
 sim_pre_located_cam = [
     {'Road': 224, 'Inflow roads': [109, 225, 269], 'Outflow roads': [3, 195], 'EffectRatio': 1},
     {'Road': 94, 'Inflow roads': [109, 163, 179], 'Outflow roads': [168, 175], 'EffectRatio': 1},

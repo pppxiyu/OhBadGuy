@@ -1081,7 +1081,9 @@ class WeightedBetweennessCentrality:
     def __init__(self, graph: nx.Graph, 
                  p_start: Dict, 
                  p_end: Dict,
-                 weight: str = 'weight'):
+                 weight: str = 'weight',
+                 node_directions: Dict = None
+                 ):
         """
         Initialize the weighted betweenness centrality calculator for NetworkX graphs.
         
@@ -1105,6 +1107,7 @@ class WeightedBetweennessCentrality:
         self.nodes = set(graph.nodes())
         self.betweenness = {node: 0.0 for node in self.nodes}
         self.excluded_nodes = None
+        self.node_directions = node_directions
     
     def set_excluded_nodes(self, excluded_nodes: List):
         """
@@ -1332,6 +1335,197 @@ class WeightedBetweennessCentrality:
         
         return self.betweenness
 
+    def calculate_w_direction(self) -> Dict:
+        """
+        Calculate weighted betweenness centrality for all nodes with directional tracking.
+        Each node's centrality is split into two directions based on node_directions.
+        
+        Returns:
+        --------
+        betweenness : dict
+            Nested dict: {node: {direction: centrality_score}}
+            For example: {271: {'v1': 15.3, 'v2': 8.7}}
+        """
+        assert self.node_directions is not None, "node_directions must be provided for directional calculation"
+        
+        # **CHANGED**: Initialize betweenness with directional structure
+        self.betweenness = {node: {'v1': 0.0, 'v2': 0.0} for node in self.nodes}
+        
+        # Step 2: Iterate over each source node
+        for s in self.nodes:
+            # Step 2a: Find all shortest paths from s
+            dist, sigma, pred = self._dijkstra_shortest_paths(s)
+            
+            # **CHANGED**: Initialize delta with directional structure
+            delta = {node: {'v1': 0.0, 'v2': 0.0} for node in self.nodes}
+            
+            # Sort nodes by distance (farthest first)
+            nodes_by_dist = sorted(self.nodes, key=lambda x: dist[x], reverse=True)
+            
+            for w in nodes_by_dist:
+                if w != s and dist[w] != float('inf'):
+                    # Calculate contribution for this (s, w) pair
+                    contribution = self.p_start.get(s, 0) * self.p_end.get(w, 0)
+                    
+                    # Propagate to predecessors
+                    for u in pred[w]:
+                        if sigma[w] > 0:
+                            # **CHANGED**: Determine directional flow
+                            # Find which direction of u has w in its neighbor list (outgoing direction)
+                            if w in self.node_directions[u]['v1']:
+                                outgoing_direction_of_u = 'v1'
+                            else:  # w must be in 'v2'
+                                outgoing_direction_of_u = 'v2'
+                            
+                            # Find which direction of w has u in its neighbor list (incoming direction)
+                            if u in self.node_directions[w]['v1']:
+                                incoming_direction_of_w = 'v1'
+                            else:  # u must be in 'v2'
+                                incoming_direction_of_w = 'v2'
+                            
+                            # **CHANGED**: Accumulate to specific direction with aligned delta
+                            delta[u][outgoing_direction_of_u] += (sigma[u] / sigma[w]) * (
+                                contribution + delta[w][incoming_direction_of_w]
+                            )
+            
+            # **CHANGED**: Update betweenness scores for both directions
+            for v in self.nodes:
+                if v != s:
+                    self.betweenness[v]['v1'] += delta[v]['v1']
+                    self.betweenness[v]['v2'] += delta[v]['v2']
+        
+        return self.betweenness
+
+    def calculate_w_exclusion_direction(self) -> Dict:
+        """
+        Calculate directional weighted betweenness centrality for all nodes with excluded nodes.
+        Flows passing through any excluded node are disregarded.
+        Returns betweenness centrality split by direction for each node.
+        
+        Algorithm:
+        ----------
+        For each source node s in the graph:
+        
+        1. Single-Source Shortest Paths (Forward Pass):
+        - Run Dijkstra's algorithm from s to find:
+            * dist[w]: shortest distance from s to each node w
+            * sigma[w]: number of shortest paths from s to w
+            * pred[w]: list of predecessor nodes of w on shortest paths from s
+        
+        2. Compute Valid Path Counts:
+        - For each node w, compute sigma_valid[w]:
+            * Number of shortest paths from s to w that do NOT pass through any excluded node
+        - Process nodes in increasing order of distance from s
+        - sigma_valid[w] = sum of sigma_valid[u] for all predecessors u not in excluded set
+        
+        3. Dependency Accumulation with Directional Tracking (Backward Pass):
+        - Process nodes in reverse order of distance from s (farthest first)
+        - For each node w that could be a destination (not excluded, has valid paths):
+            * Calculate contribution = P_start[s] × P_end[w] × (sigma_valid[w] / sigma[w])
+        - Propagate contributions backward along valid shortest paths with direction tracking:
+            * For each predecessor u of w (not excluded):
+            * Determine outgoing_direction_of_u: which direction of u contains w in its neighbors
+            * Determine incoming_direction_of_w: which direction of w contains u in its neighbors
+            * Accumulate delta[u][outgoing_direction_of_u] += 
+                (sigma_valid[u] / sigma_valid[w]) × (contribution + delta[w][incoming_direction_of_w])
+        
+        4. Update Betweenness:
+        - Add delta[v][direction] to betweenness score for each node v and direction
+        - Excluded nodes receive zero betweenness contribution
+        
+        Returns:
+        --------
+        betweenness_directional : dict
+            Nested dict: {node: {direction_name: score}} for each node and its directions
+        """
+
+        assert self.excluded_nodes is not None, "Excluded nodes set must be defined before calling this method."
+        assert self.node_directions is not None, "Node directions must be defined before calling this method."
+
+        # CHANGED: Initialize directional betweenness scores
+        self.betweenness_directional = {}
+        for node in self.nodes:
+            if node in self.node_directions:
+                directions = list(self.node_directions[node].keys())
+                self.betweenness_directional[node] = {d: 0.0 for d in directions}
+        
+        # Step 2: Iterate over each source node
+        for s in self.nodes:
+            # Step 2a: Find all shortest paths from s
+            dist, sigma, pred = self._dijkstra_shortest_paths(s)
+            
+            # Step 2b: Compute valid path counts (paths not through excluded nodes)
+            sigma_valid = {node: 0 for node in self.nodes}
+            
+            # Sort nodes by distance (closest first for forward computation)
+            nodes_by_dist_asc = sorted(self.nodes, key=lambda x: dist[x])
+            
+            for w in nodes_by_dist_asc:
+                if w in self.excluded_nodes:
+                    sigma_valid[w] = 0
+                elif w == s:
+                    sigma_valid[w] = 1
+                elif dist[w] != float('inf'):
+                    # Sum sigma_valid from all predecessors not in excluded set
+                    sigma_valid[w] = sum(sigma_valid[u] for u in pred[w] 
+                                        if u not in self.excluded_nodes)
+            
+            # CHANGED: Step 2c: Backward accumulation with directional tracking
+            delta = {}
+            for node in self.nodes:
+                if node in self.node_directions:
+                    directions = list(self.node_directions[node].keys())
+                    delta[node] = {d: 0.0 for d in directions}
+            
+            # Sort nodes by distance (farthest first for backward accumulation)
+            nodes_by_dist_desc = sorted(self.nodes, key=lambda x: dist[x], reverse=True)
+            
+            for w in nodes_by_dist_desc:
+                if w != s and w not in self.excluded_nodes and dist[w] != float('inf'):
+                    if sigma_valid[w] > 0:  # Only count if there are valid paths
+                        # Calculate contribution for this (s, w) pair
+                        # Scale by fraction of paths that are valid
+                        contribution = (self.p_start.get(s, 0) * self.p_end.get(w, 0) * 
+                                    sigma_valid[w] / sigma[w])
+                        
+                        # CHANGED: Propagate to predecessors with direction tracking
+                        for u in pred[w]:
+                            if u not in self.excluded_nodes and sigma_valid[w] > 0:
+                                # CHANGED: Determine which direction of u this flow exits from
+                                # (direction of u that contains w in its neighbor list)
+                                outgoing_direction_of_u = None
+                                if u in self.node_directions:
+                                    directions_u = list(self.node_directions[u].keys())
+                                    for dir_name in directions_u:
+                                        if w in self.node_directions[u][dir_name]:
+                                            outgoing_direction_of_u = dir_name
+                                            break
+                                
+                                # CHANGED: Determine which direction of w this flow enters from
+                                # (direction of w that contains u in its neighbor list)
+                                incoming_direction_of_w = None
+                                if w in self.node_directions:
+                                    directions_w = list(self.node_directions[w].keys())
+                                    for dir_name in directions_w:
+                                        if u in self.node_directions[w][dir_name]:
+                                            incoming_direction_of_w = dir_name
+                                            break
+                                
+                                # CHANGED: Accumulate to the specific direction using only aligned delta
+                                if outgoing_direction_of_u is not None and incoming_direction_of_w is not None:
+                                    delta[u][outgoing_direction_of_u] += (
+                                        (sigma_valid[u] / sigma_valid[w]) * 
+                                        (contribution + delta[w][incoming_direction_of_w])
+                                    )
+            
+            # CHANGED: Step 2d: Update directional betweenness scores
+            for v in self.nodes:
+                if v != s and v not in self.excluded_nodes and v in self.betweenness_directional:
+                    for direction in self.betweenness_directional[v]:
+                        self.betweenness_directional[v][direction] += delta[v][direction]
+        
+        return self.betweenness_directional
+
     def get_betweenness(self) -> Dict:
         """
         Get the calculated betweenness centrality scores.
@@ -1365,10 +1559,12 @@ class WeightedBetweennessCentrality:
 
 
 from typing import Set
+import pandas as pd
 
 class SensorPlacement:
     def __init__(self, 
                  graph: nx.Graph,
+                 geo: pd.DataFrame,
                  p_start: Dict,
                  p_end: Dict,
                  weight: str = 'weight'):
@@ -1389,13 +1585,60 @@ class SensorPlacement:
             Name of the edge attribute to use as weight (default: 'weight')
         """
         self.graph = graph
+        self.geometries = geo
         self.p_start = p_start
         self.p_end = p_end
         self.weight = weight
         self.selected_sensors = []
         self.iteration_scores = []
         
-    def place_sensors(self, num_sensors: int, verbose: bool = True, get_iterations = False) -> List:
+        self.node_directions = self._split_inward_outward_neighbors()
+
+    def _split_neighbors_by_direction(self, connected_roads, buffer=0, lost_warning=False):
+        # USE: assign the connected roads to the two end points of the road for analysis
+        # INPUT: dict, the connected roads for a road
+        # OUTPUT: a dict
+        from shapely import Point
+
+        node_geo = self.geometries[self.geometries['id'] == list(connected_roads.keys())[0]].geometry.values[0]
+        try:
+            coords = node_geo.coords
+        except:  # When lines are disconnected, data problem
+            coords = [node_geo.geoms[0].coords[0], node_geo.geoms[-1].coords[-1]]
+            if lost_warning:
+                print(
+                    "Remedial measures are taken to extract end points from road segments. "
+                    "Please note there are problems (i.e., lines are not connected in the same group) "
+                    "in the data, although they are solved for this time."
+                )
+
+        # assign the connected roads to the two end points of the road in analysis
+        v1 = []
+        v2 = []
+        for neighbor in list(connected_roads.values())[0]:
+            neighbor_geo = self.geometries[self.geometries['id'] == neighbor].geometry.values[0]
+            if neighbor_geo.distance(Point(coords[0])) <= buffer:  # if the connected road is closer to the cor 0
+                v1.append(neighbor)
+            elif neighbor_geo.distance(
+                    Point(coords[-1])) <= buffer:  # if the connected road is closer to the cor 1
+                v2.append(neighbor)
+            else:
+                if lost_warning:
+                    print('Road', road, 'is not attached to any vetice of the target road',
+                          list(neighbor_roads.keys())[0], '.')
+        return {'v1': v1, 'v2': v2}
+
+    def _split_inward_outward_neighbors(self):
+        node_names = list(self.graph.nodes())
+        node_directions = {k: None for k in node_names}
+        for n in node_names:
+            neighbors = list(nx.neighbors(self.graph, n))
+            node_directions[n] = self._split_neighbors_by_direction({n: neighbors})
+        return node_directions
+
+    def place_sensors(
+        self, num_sensors: int, verbose: bool = True, get_iterations = False, preset_sensors: Set = None
+        ) -> List:
         """
         Greedily select sensor locations to maximize coverage.
         
@@ -1428,7 +1671,8 @@ class SensorPlacement:
             self.graph, 
             self.p_start, 
             self.p_end, 
-            self.weight
+            self.weight,
+            self.node_directions,
         )
         
         candidate_nodes_over_iterations = []
@@ -1483,7 +1727,106 @@ class SensorPlacement:
         if get_iterations:
             return self.selected_sensors, candidate_nodes_over_iterations
         return self.selected_sensors
-    
+
+    def place_sensors_w_directions(
+        self, num_sensors: int, verbose: bool = True, get_iterations = False, preset_sensors: Set = None
+        ) -> List:
+        """
+        Greedily select sensor locations to maximize coverage.
+        
+        Algorithm:
+        ----------
+        1. Initialize empty exclusion set
+        2. For each iteration (up to num_sensors):
+           a. Calculate weighted betweenness centrality with current exclusions
+           b. Select node with highest centrality (that's not already selected)
+           c. Add selected node to exclusion set
+           d. Record the selection and its score
+        
+        Parameters:
+        -----------
+        num_sensors : int
+            Number of sensors to place
+        verbose : bool, optional
+            If True, print progress information (default: True)
+            
+        Returns:
+        --------
+        selected_sensors : list
+            List of selected sensor locations in order of selection
+        """
+        self.selected_sensors = []
+        self.iteration_scores = []
+        if preset_sensors is not None:
+            excluded_nodes = preset_sensors.copy()
+        else:
+            excluded_nodes = set()
+        
+        calculator = WeightedBetweennessCentrality(
+            self.graph, 
+            self.p_start, 
+            self.p_end, 
+            self.weight,
+            self.node_directions,
+        )
+        
+        candidate_nodes_over_iterations = []
+        for iteration in range(num_sensors):
+            if verbose:
+                print(f"\n{'='*60}")
+                print(f"Iteration {iteration + 1}/{num_sensors}")
+                print(f"{'='*60}")
+            
+            # Set excluded nodes (previously selected sensors)
+            if excluded_nodes:
+                calculator.set_excluded_nodes(list(excluded_nodes))
+                betweenness = calculator.calculate_w_exclusion_direction()
+            else:
+                # First iteration: no exclusions
+                betweenness = calculator.calculate_w_direction()
+            
+            # Find node-direction pair with highest centrality (excluding already selected nodes)
+            available_node_directions = {}
+            for node, directions in betweenness.items():
+                if node not in excluded_nodes:
+                    # Add both directions as separate candidates
+                    available_node_directions[(node, 'v1')] = directions['v1']
+                    available_node_directions[(node, 'v2')] = directions['v2']
+            
+            if not available_node_directions:
+                if verbose:
+                    print("No more available nodes to select.")
+                break
+            
+            # Select node-direction pair with maximum betweenness
+            best_node_direction = max(available_node_directions.items(), key=lambda x: x[1])
+            candidate_node_directions = dict(sorted(
+                available_node_directions.items(), key=lambda x: x[1], reverse=True
+                )[:num_sensors])
+            (selected_node, selected_direction), selected_score = best_node_direction
+            
+            # Record selection
+            self.selected_sensors.append((selected_node, selected_direction))
+            self.iteration_scores.append(selected_score)
+            excluded_nodes.add(selected_node)
+            candidate_nodes_over_iterations.append(candidate_node_directions)
+            
+            if verbose:
+                print(f"Selected node: {selected_node}, direction: {selected_direction}")
+                print(f"Betweenness score: {selected_score:.6f}")
+                print(f"Total sensors placed: {len(self.selected_sensors)}")
+        
+        if verbose:
+            print(f"\n{'='*60}")
+            print("Sensor Placement Complete")
+            print(f"{'='*60}")
+            print(f"Selected sensors (in order): {self.selected_sensors}")
+            print(f"Scores: {[f'{s:.6f}' for s in self.iteration_scores]}")
+        
+        if get_iterations:
+            return self.selected_sensors, candidate_nodes_over_iterations
+        return self.selected_sensors
+
     def get_selected_sensors(self) -> List:
         """
         Get the list of selected sensor locations.
@@ -1523,4 +1866,5 @@ class SensorPlacement:
             'scores': self.iteration_scores,
             'num_sensors': len(self.selected_sensors)
         }
+
 

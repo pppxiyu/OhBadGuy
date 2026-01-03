@@ -18,6 +18,7 @@ dir_local_population = './data/populationDist.shp'
 
 dir_city_boundary = './data/census/Municipal Boundaries.json'
 
+dir_cache_plc = './cache/cache_plc'
 dir_cache = './cache/cache_fullModel_20251108'
 model_name = 'GConvGRU'  # GConvGRU, GConvGRU_NoConv, GConvGRU_NoRes
 

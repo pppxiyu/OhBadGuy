@@ -590,11 +590,11 @@ def map_placement(
         if placement_candidate is not None:
             legend_elements.append(Line2D([0], [0], marker='o', color='w', 
                                         markerfacecolor='#4A90E2', markersize=10,
-                                        markeredgecolor='white', markeredgewidth=1.5,
+                                        # markeredgecolor='white', markeredgewidth=1.5,
                                         label='Candidate location'))
         legend_elements.append(Line2D([0], [0], marker='o', color='w', 
                                     markerfacecolor='#E63946', markersize=10,
-                                    markeredgecolor='white', markeredgewidth=1.5,
+                                    # markeredgecolor='white', markeredgewidth=1.5,
                                     label='Selected location'))
         
         ax.legend(handles=legend_elements, loc='lower left', frameon=False, fontsize=18)
@@ -616,7 +616,7 @@ def map_placement(
 def map_placement_directional(
     placement_placed, direction_info, values, city_b, roads, polygons, draw_polygon=False,
     save_path=None, draw_legend=True,
-    placement_candidate=None,
+    pre_placement=None,
 ):
     import geopandas as gpd
     import numpy as np
@@ -681,15 +681,15 @@ def map_placement_directional(
     """
     Add candidate placement dots (behind placed dots)
     """
-    if placement_candidate is not None:
+    if pre_placement is not None:
         # Filter roads to only those in the candidate placement list
-        candidate_roads = roads[roads['id'].isin(placement_candidate)]
+        candidate_roads = roads[roads['id'].isin(pre_placement)]
         
         # Get the centroids of the selected roads
         candidate_points = candidate_roads.geometry.centroid
         
-        # Plot the candidate placement locations with blue color
-        candidate_points.plot(ax=ax, color='#4A90E2', markersize=200, 
+        # Plot the candidate placement locations with purple color
+        candidate_points.plot(ax=ax, color='#9B59B6', markersize=200, 
                              edgecolor='white', linewidth=2, 
                              zorder=4, alpha=0.9)
     
@@ -776,17 +776,15 @@ def map_placement_directional(
         Add legend
         """
         legend_elements = []
-        if placement_candidate is not None:
+        if pre_placement is not None:
             legend_elements.append(Line2D([0], [0], marker='o', color='w', 
-                                        markerfacecolor='#4A90E2', markersize=10,
-                                        markeredgecolor='white', markeredgewidth=1.5,
-                                        label='Candidate location'))
+                                        markerfacecolor='#9B59B6', markersize=10,
+                                        label='Preconfigurations'))
         legend_elements.append(Line2D([0], [0], marker='^', color='w', 
                                     markerfacecolor='#00A8E8', markersize=10,
-                                    markeredgecolor='white', markeredgewidth=1.5,
-                                    label='Selected location'))
+                                    label='Selections'))
         
-        ax.legend(handles=legend_elements, loc='lower left', frameon=False, fontsize=18)
+        ax.legend(handles=legend_elements, loc=(0.05, 0.08), frameon=False, fontsize=18)
     
     # Show
     ax.set_axis_off()
@@ -800,3 +798,4 @@ def map_placement_directional(
     else:
         fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
         plt.close(fig)
+

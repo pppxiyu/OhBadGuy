@@ -4,6 +4,8 @@ from utils import eval as ev
 from utils import vis
 import model as mo
 import os
+import matplotlib.pyplot as plt
+import pickle
 
 # crime data
 crime_data = dd.CrimeData()
@@ -68,6 +70,7 @@ test_y_iterate = test_y.copy()
 #     spatial_resolution=100, n_layers=40, save_path=f'{dir_figs}/density_map_static.png'
 # )
 
+plc_over_weeks = dict()
 for i in range(test_x.shape[0] - 1):
     i += 1
     train_x, train_y, val_x, val_y, test_x_iterate, test_y_iterate = dd.shift_samples_test_2_train(
@@ -154,16 +157,16 @@ for i in range(test_x.shape[0] - 1):
     #                 save_path=f'{dir_figs}/opt_process/plc_iteration_{ii}.png',
     #             )
 
-    if i in [1, 8, 14]:
-        pop_values = dict(road_data.road_network.nodes(data='pop'))
-        p_start = {k: v/sum(pop_values.values()) for k, v in pop_values.items()}
+    # if i in [1, 8, 14]:
+    #     pop_values = dict(road_data.road_network.nodes(data='pop'))
+    #     p_start = {k: v/sum(pop_values.values()) for k, v in pop_values.items()}
 
-        probabilities = (pred[0, :, 0] - pred[0, :, 0].min()) / (pred[0, :, 0].max() - pred[0, :, 0].min())
-        probabilities = probabilities / probabilities.sum()
-        crime_values = {i + 1: probabilities[i] for i in range(len(probabilities))}
-        p_end = {k: v/sum(crime_values.values()) for k, v in crime_values.items()}
+    #     probabilities = (pred[0, :, 0] - pred[0, :, 0].min()) / (pred[0, :, 0].max() - pred[0, :, 0].min())
+    #     probabilities = probabilities / probabilities.sum()
+    #     crime_values = {i + 1: probabilities[i] for i in range(len(probabilities))}
+    #     p_end = {k: v/sum(crime_values.values()) for k, v in crime_values.items()}
 
-        optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
+    #     optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
 
         # # # vis: sensor placements over weeks (no direction)
         # selected_sensors, selected_sensors_iterations = optimizer.place_sensors(
@@ -179,7 +182,7 @@ for i in range(test_x.shape[0] - 1):
 
         # # # vis: sensor placements over weeks (with direction)
         # selected_sensors, selected_sensors_iterations = optimizer.place_sensors_w_directions(
-        #     20 , verbose=True, get_iterations=True)
+        #     24 , verbose=True, get_iterations=True)
         # vis.map_placement_directional(
         #     selected_sensors, optimizer.node_directions,
         #     pred[0, :, :].flatten(), 
@@ -188,20 +191,45 @@ for i in range(test_x.shape[0] - 1):
         #     polygons=crime_data.polygon.copy(),
         #     draw_polygon=True,
         #     save_path=f'{dir_figs}/plc_over_weeks/plc_directional_week_{i}.png',)
+        # plt.close('all')
 
-        # # vis: sensor placements over weeks (with direction and with existing sensors)
-        selected_sensors, selected_sensors_iterations = optimizer.place_sensors_w_directions(
-            10 , verbose=True, get_iterations=True, preset_sensors=set([d['Road'] for d in pre_located_cam]) 
-            )
-        vis.map_placement_directional(
-            selected_sensors, optimizer.node_directions,
-            pred[0, :, :].flatten(), 
-            dir_city_boundary, 
-            roads=road_data.road_lines.copy(),
-            polygons=crime_data.polygon.copy(),
-            draw_polygon=True,
-            placement_candidate=set([d['Road'] for d in pre_located_cam]),
-            save_path=f'{dir_figs}/plc_over_weeks/plc_directional_w_preset_week_{i}.png',)
+        # # # vis: sensor placements over weeks (with direction and with existing sensors)
+        # selected_sensors, selected_sensors_iterations = optimizer.place_sensors_w_directions(
+        #     10 , verbose=True, get_iterations=True, preset_sensors=set([d['Road'] for d in pre_located_cam]) 
+        #     )
+        # vis.map_placement_directional(
+        #     selected_sensors, optimizer.node_directions,
+        #     pred[0, :, :].flatten(), 
+        #     dir_city_boundary, 
+        #     roads=road_data.road_lines.copy(),
+        #     polygons=crime_data.polygon.copy(),
+        #     draw_polygon=True,
+        #     pre_placement=set([d['Road'] for d in pre_located_cam]),
+        #     save_path=f'{dir_figs}/plc_over_weeks/plc_directional_w_preset_week_{i}.png',
+        #     )
+        # plt.close('all')
+
+    plc_over_sensor_counts = dict()
+    if i:
+        pop_values = dict(road_data.road_network.nodes(data='pop'))
+        p_start = {k: v/sum(pop_values.values()) for k, v in pop_values.items()}
+
+        probabilities = (pred[0, :, 0] - pred[0, :, 0].min()) / (pred[0, :, 0].max() - pred[0, :, 0].min())
+        probabilities = probabilities / probabilities.sum()
+        crime_values = {i + 1: probabilities[i] for i in range(len(probabilities))}
+        p_end = {k: v/sum(crime_values.values()) for k, v in crime_values.items()}
+
+        optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
+
+        for s_count in [5, 10, 20, 50, 75, 100, 150, 200]:
+            selected_sensors = optimizer.place_sensors_w_directions(
+                s_count , verbose=True, preset_sensors=set([d['Road'] for d in pre_located_cam]) 
+                )
+            plc_over_sensor_counts[s_count] = selected_sensors
+    plc_over_weeks[i] = plc_over_sensor_counts
+    
+with open(f'{dir_cache_plc}/plc_w_preset.pkl', 'wb') as f:
+    pickle.dump(plc_over_weeks, f)
 
 # vis: metrics and metrics scatter
 ev.aggr_metrics(metrics_ml, 'ml')

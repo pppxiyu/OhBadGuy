@@ -799,3 +799,81 @@ def map_placement_directional(
         fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
         plt.close(fig)
 
+
+def ridge_plot_movement_over_sensor_counts(plc_over_weeks, save_path=None):
+    import pandas as pd
+    import numpy as np
+    from ridgeplot import ridgeplot
+    
+    # Extract all sensor counts (assuming they're the same across weeks)
+    first_week = next(iter(plc_over_weeks.values()))
+    sensor_counts = sorted(first_week.keys())
+    weeks = sorted(plc_over_weeks.keys())
+
+    samples = []
+    labels = []
+    for sensor_count in sensor_counts:
+        changes_over_weeks = []
+        
+        for i in range(len(weeks) - 1):
+            current_week = weeks[i]
+            next_week = weeks[i + 1]
+            
+            # Convert lists to sets for comparison
+            current_set = set(plc_over_weeks[current_week][sensor_count])
+            next_set = set(plc_over_weeks[next_week][sensor_count])
+            
+            # Count changes (sensor_count - overlap)
+            overlap = len(current_set & next_set)
+            num_changes = sensor_count - overlap
+            changes_over_weeks.append(num_changes)
+        
+        # Add to samples and labels
+        samples.append(np.array(changes_over_weeks))
+        labels.append(f'{sensor_count} CCTVs')
+    
+    # Convert to numpy array for ridgeplot
+    samples = np.array(samples)
+    
+    # Determine x-axis range
+    all_changes = samples.flatten()
+    x_min, x_max = all_changes.min(), all_changes.max()
+    x_range = x_max - x_min
+    kde_points = np.linspace(x_min - x_range * 0.1, x_max + x_range * 0.1, 500)
+    
+    # Create ridge plot
+    fig = ridgeplot(
+        samples=samples,
+        bandwidth=x_range / 20,  # Adaptive bandwidth based on data range
+        kde_points=kde_points,
+        colorscale="Blues_r",  # Reversed: lighter for smaller sensor counts
+        colormode="row-index",
+        # opacity=0.9,
+        labels=labels,
+        spacing=3 / 9,
+    )
+    
+    # Update layout
+    fig.update_layout(
+        height=max(560, len(sensor_counts) * 80),
+        width=900,
+        font=dict(family="Arial", size=19),
+        plot_bgcolor="white",
+        xaxis_gridcolor="rgba(0, 0, 0, 0.1)",
+        yaxis_gridcolor="rgba(0, 0, 0, 0.1)",
+        xaxis_title=dict(
+            text="Number of Changes", 
+            font=dict(family="Arial", size=19,)
+        ),
+        showlegend=False,
+    )
+    
+    # Save or show
+    if save_path is None:
+        fig.show()
+    else:
+        fig.write_image(save_path, width=900, height=max(560, len(sensor_counts) * 80))
+
+    return
+
+    

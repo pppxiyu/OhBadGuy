@@ -221,15 +221,21 @@ for i in range(test_x.shape[0] - 1):
 
         optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
 
-        for s_count in [5, 10, 20, 50, 75, 100, 150, 200]:
+        for s_count in [250, 280]: # [5, 10, 20, 50, 75, 100, 150, 200]:
             selected_sensors = optimizer.place_sensors_w_directions(
-                s_count , verbose=True, preset_sensors=set([d['Road'] for d in pre_located_cam]) 
+                s_count, verbose=True, preset_sensors=set([d['Road'] for d in pre_located_cam]),
                 )
             plc_over_sensor_counts[s_count] = selected_sensors
     plc_over_weeks[i] = plc_over_sensor_counts
-    
-with open(f'{dir_cache_plc}/plc_w_preset.pkl', 'wb') as f:
+with open(f'{dir_cache_plc}/plc_w_preset_280.pkl', 'wb') as f:
     pickle.dump(plc_over_weeks, f)
+# vis: movement over sensor counts
+with open(f'{dir_cache_plc}/plc_w_preset.pkl', 'rb') as f:
+    plc_over_weeks = pickle.load(f)
+vis.ridge_plot_movement_over_sensor_counts(
+    plc_over_weeks, 
+    # save_path=f'{dir_figs}/ridge_plot_movement_over_sensor_counts.png',
+)
 
 # vis: metrics and metrics scatter
 ev.aggr_metrics(metrics_ml, 'ml')

@@ -800,7 +800,7 @@ def map_placement_directional(
         plt.close(fig)
 
 
-def ridge_plot_movement_over_sensor_counts(plc_over_weeks, save_path=None):
+def ridge_plot_movement_over_sensor_counts_bk(plc_over_weeks, save_path=None, skip_sensor_counts=[]):
     import pandas as pd
     import numpy as np
     from ridgeplot import ridgeplot
@@ -813,15 +813,17 @@ def ridge_plot_movement_over_sensor_counts(plc_over_weeks, save_path=None):
     samples = []
     labels = []
     for sensor_count in sensor_counts:
+        if sensor_count in skip_sensor_counts:
+            continue
         changes_over_weeks = []
         
         for i in range(len(weeks) - 1):
             current_week = weeks[i]
             next_week = weeks[i + 1]
             
-            # Convert lists to sets for comparison
-            current_set = set(plc_over_weeks[current_week][sensor_count])
-            next_set = set(plc_over_weeks[next_week][sensor_count])
+            # Convert lists to sets for comparison, directions are not considered
+            current_set = set([i[0] for i in plc_over_weeks[current_week][sensor_count]])
+            next_set = set([i[0] for i in plc_over_weeks[next_week][sensor_count]])
             
             # Count changes (sensor_count - overlap)
             overlap = len(current_set & next_set)
@@ -876,4 +878,119 @@ def ridge_plot_movement_over_sensor_counts(plc_over_weeks, save_path=None):
 
     return
 
+
+def ridge_plot_movement_over_sensor_counts(plc_over_weeks_list, save_path=None, skip_sensor_counts=[]):
+    import pandas as pd
+    import numpy as np
+    from ridgeplot import ridgeplot
     
+    assert len(plc_over_weeks_list) == 2, "Currently supports exactly two datasets, as of the color scheme."
+
+    # Extract all sensor counts (assuming they're the same across weeks and datasets)
+    first_week = next(iter(plc_over_weeks_list[0].values()))
+    sensor_counts = sorted(first_week.keys())
+    
+    # Prepare samples as list of lists of DataFrames
+    samples = []
+    
+    for sensor_count in sensor_counts:
+        if sensor_count in skip_sensor_counts:
+            continue
+        
+        row_distributions = []
+        
+        # Process each plc_over_weeks dataset
+        for idx, plc_data in enumerate(plc_over_weeks_list):
+            weeks = sorted(plc_data.keys())
+            changes_over_weeks = []
+            
+            for i in range(len(weeks) - 1):
+                current_week = weeks[i]
+                next_week = weeks[i + 1]
+                
+                # Convert lists to sets for comparison, directions are not considered
+                current_set = set([i[0] for i in plc_data[current_week][sensor_count]])
+                next_set = set([i[0] for i in plc_data[next_week][sensor_count]])
+                
+                # Count changes (sensor_count - overlap)
+                overlap = len(current_set & next_set)
+                num_changes = sensor_count - overlap
+                changes_over_weeks.append(num_changes)
+            
+            # Convert to DataFrame (required by ridgeplot for multiple distributions per row)
+            df = pd.DataFrame({f'changes_{idx}': changes_over_weeks})
+            row_distributions.append(df[f'changes_{idx}'])
+
+        samples.append(row_distributions)
+
+    # Determine x-axis range from all data
+    all_changes = []
+    for row in samples:
+        for dist in row:
+            all_changes.extend(dist.values)
+    all_changes = np.array(all_changes)
+    x_min, x_max = all_changes.min(), all_changes.max()
+    x_range = x_max - x_min
+    kde_points = np.linspace(x_min - x_range * 0.1, x_max + x_range * 0.1, 500)
+
+    fig = ridgeplot(
+        samples=samples,
+        bandwidth=x_range / 20,  # Adaptive bandwidth based on data range
+        kde_points=kde_points,
+        colorscale=['#79B4D9', '#D99B66'],
+        colormode="trace-index-row-wise",
+        labels=[["With preset", "Without preset"]] * (len(sensor_counts) - len(skip_sensor_counts)),
+        row_labels=[f'{i} CCTVs' for i in sensor_counts if i not in skip_sensor_counts],
+        spacing=3 / 9,
+        opacity=0.8,
+    )
+
+    fig.update_layout(
+        height=max(560, len(plc_over_weeks_list) * 80),
+        width=900,
+        font=dict(family="Arial", size=20),
+        plot_bgcolor="white",
+        xaxis_gridcolor="rgba(0, 0, 0, 0.1)",
+        yaxis_gridcolor="rgba(0, 0, 0, 0.1)",
+        xaxis_title=dict(
+            text="Number of Changes", 
+            font=dict(family="Arial", size=20)
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=1.0,
+            xanchor="center",
+            x=0.5
+        )
+    )
+
+    legend_names = set()
+    for trace in fig.data:
+        if trace.name in legend_names:
+            trace.showlegend = False
+        else:
+            legend_names.add(trace.name)
+
+    # Save or show
+    if save_path is None:
+        fig.show()
+    else:
+        fig.write_html(save_path.split('.png')[0] + '.html',)
+        html_to_high_dpi_image(
+            save_path.split('.png')[0] + '.html', save_path, width=900, height=max(560, len(plc_over_weeks_list) * 80)
+            )
+    return
+
+from playwright.sync_api import sync_playwright
+def html_to_high_dpi_image(html_path, output_path, width=900, height=560):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(
+            viewport={'width': width, 'height': height},
+            device_scale_factor=3.125  # 300 DPI / 96 DPI ≈ 3.125
+        )
+        page.goto(f'file:///{html_path}')
+        page.screenshot(path=output_path, full_page=True)
+        browser.close()

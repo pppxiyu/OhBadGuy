@@ -82,7 +82,7 @@ for i in range(test_x.shape[0] - 1):
     metrics_naive.append(ev.cal_metrics(ev.build_baseline_ave([train_x, val_x]), true[0, :, :], 'naive', adj_matrix=crime_pred.adj_matrix))
 
     # if i in [1, 8, 14]:
-    #     # vis: dynamics vs static density map /pred map 
+    #     # vis: map, dynamics vs static density map /pred
     #     folder_path = f"{dir_figs}/density_map_diff"
     #     os.makedirs(folder_path, exist_ok=True)
     #     vis.density_crime_map(
@@ -102,7 +102,7 @@ for i in range(test_x.shape[0] - 1):
     #         spatial_resolution=100, n_layers=40, save_path=f'{folder_path}/density_map_diff_static_{i}.png'
     #     )
 
-    #     # vis: crime density
+    #     # vis: map, crime density
     #     folder_path = f"{dir_figs}/density_map_pred"
     #     os.makedirs(folder_path, exist_ok=True)
     #     vis.density_crime_map(
@@ -116,7 +116,7 @@ for i in range(test_x.shape[0] - 1):
     #         n_layers=10, power_transform=2,  # increase power and reduce layers to amplify the nuances 
     #     )
 
-    #     # vis: crime density sequence
+    #     # vis: map,crime density sequence
     #     vis.density_crime_map_sequence(
     #         pred[0, :, :].flatten(), 
     #         dir_city_boundary, 
@@ -139,13 +139,13 @@ for i in range(test_x.shape[0] - 1):
     #         num_sensors=10 , verbose=True, get_iterations=True
     #     )
     #     if i in [8, ]:
-    #         # # vis: marginal gain of centrality
+    #         # # vis: line, marginal gain of centrality
     #         vis.line_marginal_gain_centrality(
     #             optimizer.get_iteration_scores()
     #             , save_path=f'{dir_figs}/line_marginal_gain_centrality_week_{i}.png'
     #         )
     #     if i in [1, ]:
-    #         # # vis: opt process of sensor placement
+    #         # # vis: map, opt process of sensor placement
     #         for ii, plc_iter in enumerate(selected_sensors_iterations):
     #             vis.map_placement(
     #                 selected_sensors[:(ii + 1)], 
@@ -209,42 +209,44 @@ for i in range(test_x.shape[0] - 1):
         #     )
         # plt.close('all')
 
-    plc_over_sensor_counts = dict()
-    if i:
-        pop_values = dict(road_data.road_network.nodes(data='pop'))
-        p_start = {k: v/sum(pop_values.values()) for k, v in pop_values.items()}
+#     plc_over_sensor_counts = dict()
+#     if i:
+#         pop_values = dict(road_data.road_network.nodes(data='pop'))
+#         p_start = {k: v/sum(pop_values.values()) for k, v in pop_values.items()}
 
-        probabilities = (pred[0, :, 0] - pred[0, :, 0].min()) / (pred[0, :, 0].max() - pred[0, :, 0].min())
-        probabilities = probabilities / probabilities.sum()
-        crime_values = {i + 1: probabilities[i] for i in range(len(probabilities))}
-        p_end = {k: v/sum(crime_values.values()) for k, v in crime_values.items()}
+#         probabilities = (pred[0, :, 0] - pred[0, :, 0].min()) / (pred[0, :, 0].max() - pred[0, :, 0].min())
+#         probabilities = probabilities / probabilities.sum()
+#         crime_values = {i + 1: probabilities[i] for i in range(len(probabilities))}
+#         p_end = {k: v/sum(crime_values.values()) for k, v in crime_values.items()}
 
-        optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
+#         optimizer = mo.SensorPlacement(road_data.road_network.copy(), road_data.road_lines.copy(), p_start, p_end,)
 
-        for s_count in [250, 280]: # [5, 10, 20, 50, 75, 100, 150, 200]:
-            selected_sensors = optimizer.place_sensors_w_directions(
-                s_count, verbose=True, preset_sensors=set([d['Road'] for d in pre_located_cam]),
-                )
-            plc_over_sensor_counts[s_count] = selected_sensors
-    plc_over_weeks[i] = plc_over_sensor_counts
-with open(f'{dir_cache_plc}/plc_w_preset_280.pkl', 'wb') as f:
-    pickle.dump(plc_over_weeks, f)
-# vis: movement over sensor counts
+#         for s_count in [5, 10, 20, 50, 75, 100, 150, 200, 250, 280]:
+#             selected_sensors = optimizer.place_sensors_w_directions(
+#                 s_count, verbose=True, #preset_sensors=set([d['Road'] for d in pre_located_cam]),
+#                 )
+#             plc_over_sensor_counts[s_count] = selected_sensors
+#     plc_over_weeks[i] = plc_over_sensor_counts
+# with open(f'{dir_cache_plc}/plc_wo_preset.pkl', 'wb') as f:
+#     pickle.dump(plc_over_weeks, f)
+# vis: dists, movement over sensor counts
 with open(f'{dir_cache_plc}/plc_w_preset.pkl', 'rb') as f:
-    plc_over_weeks = pickle.load(f)
+    plc_over_weeks_w_preset = pickle.load(f)
+with open(f'{dir_cache_plc}/plc_wo_preset.pkl', 'rb') as f:
+    plc_over_weeks_wo_preset = pickle.load(f)
 vis.ridge_plot_movement_over_sensor_counts(
-    plc_over_weeks, 
-    # save_path=f'{dir_figs}/ridge_plot_movement_over_sensor_counts.png',
+    [plc_over_weeks_w_preset, plc_over_weeks_wo_preset], skip_sensor_counts=[280],
+    save_path=f'{dir_figs}/ridge_plot_movement_over_sensor_counts.png',
 )
 
-# vis: metrics and metrics scatter
-ev.aggr_metrics(metrics_ml, 'ml')
-ev.aggr_metrics(metrics_naive, 'naive')
-vis.scatter_crime_pred_metrics(
-    [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], 
-    y_label='Weighted Pearson Coefficient', annotate=False, stats_test='mannwhitneyu', alternative='greater',
-    save_path=f'{dir_figs}/scatter_crime_pred_pearson.png'
-)  
+# vis: scatter and box, metrics and metrics scatter
+# ev.aggr_metrics(metrics_ml, 'ml')
+# ev.aggr_metrics(metrics_naive, 'naive')
+# vis.scatter_crime_pred_metrics(
+#     [d['Adapted_Pearson'] for d in metrics_ml], [d['Adapted_Pearson'] for d in metrics_naive], 
+#     y_label='Weighted Pearson Coefficient', annotate=False, stats_test='mannwhitneyu', alternative='greater',
+#     save_path=f'{dir_figs}/scatter_crime_pred_pearson.png'
+# )  
 
-print()
+print('Done.')
 

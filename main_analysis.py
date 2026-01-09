@@ -50,22 +50,17 @@ if analysis_name == 'city_map':
 if analysis_name == 'validation':
     import geopandas as gpd
     from shapely import Point
-    import statsmodels.api as sm
     import numpy as np
     import pandas as pd
     from datetime import datetime, timedelta
-    from statsmodels.tsa.arima.model import ARIMA
     from scipy import stats
     import matplotlib.pyplot as plt
-    import statsmodels.api as sm
-    from statsmodels.stats.diagnostic import acorr_ljungbox
-    from statsmodels.regression.linear_model import OLS
-    from statsmodels.stats.stattools import durbin_watson
+    from statsmodels.tsa.statespace.sarimax import SARIMAX
 
     space_filter_r = 1640  # None,  100m: 328; 500m: 1640; 250m:820
-    time_filter_r = 16  # week before and after the implementation point
+    time_filter_r = 16  # week (before and) after the implementation point
     resample = 'D'
-    effect_date = "2023-05-15" # the implementation data is "2023-04-24"
+    effect_date = "2023-04-24" # the implementation data is "2023-04-24"
 
     ## data of the past one year
     val_data = val.import_val_data(dir_val_data)
@@ -90,7 +85,7 @@ if analysis_name == 'validation':
     if time_filter_r is not None:
         # filter time range 
         implement_date = pd.to_datetime(effect_date)
-        start_date = implement_date - timedelta(weeks=time_filter_r)
+        start_date = implement_date - timedelta(weeks= 48 - time_filter_r)
         end_date = implement_date + timedelta(weeks=time_filter_r)
         val_data = val_data[
             # (val_data.index >= start_date) 
@@ -101,7 +96,7 @@ if analysis_name == 'validation':
     # vis: temporal line
     before = val_data[val_data.index <= effect_date]
     after = val_data[val_data.index >= effect_date]
-    val.line_crime_count(before, after, 'before', 'after', resample=resample, use_moving_avg=True, window=10)
+    vis.line_crime_count(before, after, 'before', 'after', resample=resample, use_moving_avg=True, window=10)
 
     # formatting 4 reg
     df_crime_sampled = val_data.resample(resample).count()
@@ -121,43 +116,198 @@ if analysis_name == 'validation':
         0
     )
 
+    # Use ARIMA with external regressors
+    result = SARIMAX(
+        df_crime_sampled['y'],
+        exog=df_crime_sampled[['time', 'time_after_intervention']],
+        order=(4, 0, 0),
+    ).fit()
 
-    # Use ARIMAX (ARIMA with external regressors)
-    from statsmodels.tsa.statespace.sarimax import SARIMAX
+    # View results
+    print(result.summary())
 
-    # Try AR(1) first
-    model_ar = SARIMAX(df_crime_sampled['y'], 
-                    exog=df_crime_sampled[['time', 'intervention', 'time_after_intervention']],
-                    order=(1, 0, 0)).fit()
-
-    print(model_ar.summary())
-
-
-
-
-
-
-
+    # Test if trend weakened (coefficient on time_after_intervention < 0)
+    coef = result.params['time_after_intervention']
+    pvalue = result.pvalues['time_after_intervention']
+    print(f"\nSlope change coefficient: {coef:.4f}")
+    print(f"P-value (one-sided test H1: coef < 0): {pvalue/2 if coef < 0 else 1-pvalue/2:.4f}")
 
 
 
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Get fitted values and residuals
+    df_crime_sampled['fitted'] = result.fittedvalues
+    df_crime_sampled['residuals'] = result.resid
+
+    # Intervention point
+    intervention_idx = df_crime_sampled['intervention'].idxmax()
+    intervention_time = df_crime_sampled.loc[intervention_idx, 'time']
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(df_crime_sampled['time'], df_crime_sampled['y'], 'o', alpha=0.5, label='Actual', markersize=3)
+    ax.plot(df_crime_sampled['time'], df_crime_sampled['fitted'], '-', color='red', label='Fitted', linewidth=2)
+    ax.axvline(intervention_time, color='green', linestyle='--', linewidth=2, label='Intervention')
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Crime Count')
+    ax.set_title('Actual vs Fitted Values')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
 
-    # regression
-    df_crime_sampled_before = df_crime_sampled[df_crime_sampled['series'] == 1].copy()
-    df_crime_sampled_after = df_crime_sampled[df_crime_sampled['series'] == 2].copy()
-
-    X = sm.add_constant(df_crime_sampled_before[['time']])
-    model = sm.OLS(df_crime_sampled_before['count'], X).fit()
-    print(model.summary())
-
-    X = sm.add_constant(df_crime_sampled_after[['time']])
-    model = sm.OLS(df_crime_sampled_after['count'], X).fit()
-    print(model.summary())
 
 
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from scipy import stats
+    from statsmodels.stats.diagnostic import het_white
+
+    # Get fitted values and residuals
+    df_crime_sampled['fitted'] = result.fittedvalues
+    df_crime_sampled['residuals'] = result.resid
+
+    # Intervention point
+    intervention_idx = df_crime_sampled['intervention'].idxmax()
+    intervention_time = df_crime_sampled.loc[intervention_idx, 'time']
+
+    # Statistical tests for residuals
+    resid = df_crime_sampled['residuals'].values
+
+    # Zero Mean test (t-test)
+    t_stat, p_value_mean = stats.ttest_1samp(resid, 0)
+    mean_resid = resid.mean()
+    std_resid = resid.std()
+
+    # Homoscedasticity tests
+    # White test
+    try:
+        white_stat, white_pvalue, _, _ = het_white(resid, result.model.exog)
+    except:
+        white_stat, white_pvalue = np.nan, np.nan
+
+    # Levene's test (pre vs post intervention)
+    pre_resid = df_crime_sampled[df_crime_sampled['intervention'] == 0]['residuals']
+    post_resid = df_crime_sampled[df_crime_sampled['intervention'] == 1]['residuals']
+    levene_stat, levene_pvalue = stats.levene(pre_resid, post_resid)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(df_crime_sampled['time'], df_crime_sampled['residuals'], 'o-', alpha=0.6, markersize=3, color='steelblue')
+
+    # Add mean line
+    ax.axhline(mean_resid, color='red', linestyle='-', linewidth=2, label=f'Mean = {mean_resid:.4f}')
+    ax.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5, label='Zero')
+
+    # Add ±2 std bands
+    ax.axhline(mean_resid + 2*std_resid, color='orange', linestyle=':', linewidth=1.5, alpha=0.7, label='±2σ')
+    ax.axhline(mean_resid - 2*std_resid, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
+
+    # Intervention line
+    ax.axvline(intervention_time, color='green', linestyle='--', linewidth=2, label='Intervention')
+
+    # Add test results as text box
+    if not np.isnan(white_pvalue):
+        textstr = '\n'.join([
+            'Statistical Tests:',
+            f'Zero Mean (t-test):',
+            f'  p = {p_value_mean:.4f}',
+            f'  {"✓ Pass" if p_value_mean > 0.05 else "✗ Fail"} (α=0.05)',
+            '',
+            f'Homoscedasticity:',
+            f'  White test: p = {white_pvalue:.4f}',
+            f'  {"✓ Pass" if white_pvalue > 0.05 else "✗ Fail"}',
+            f'  Levene (pre/post): p = {levene_pvalue:.4f}',
+            f'  {"✓ Pass" if levene_pvalue > 0.05 else "✗ Fail"}'
+        ])
+    else:
+        textstr = '\n'.join([
+            'Statistical Tests:',
+            f'Zero Mean (t-test):',
+            f'  p = {p_value_mean:.4f}',
+            f'  {"✓ Pass" if p_value_mean > 0.05 else "✗ Fail"} (α=0.05)',
+            '',
+            f'Homoscedasticity:',
+            f'  Levene (pre/post): p = {levene_pvalue:.4f}',
+            f'  {"✓ Pass" if levene_pvalue > 0.05 else "✗ Fail"}'
+        ])
+
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=8,
+            verticalalignment='top', bbox=props, family='monospace')
+
+    ax.set_xlabel('Time')
+    ax.set_ylabel('Residuals')
+    ax.set_title('Residuals Over Time with Diagnostics')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # Print detailed test results
+    print("\n" + "="*50)
+    print("RESIDUAL DIAGNOSTIC TESTS")
+    print("="*50)
+    print(f"\n1. Zero Mean Test (One-sample t-test)")
+    print(f"   H0: mean = 0")
+    print(f"   Sample mean: {mean_resid:.6f}")
+    print(f"   t-statistic: {t_stat:.4f}")
+    print(f"   p-value: {p_value_mean:.4f}")
+    print(f"   Result: {'PASS - Mean not significantly different from 0' if p_value_mean > 0.05 else 'FAIL - Mean significantly different from 0'}")
+
+    print(f"\n2. Homoscedasticity Tests")
+    if not np.isnan(white_pvalue):
+        print(f"   a) White Test")
+        print(f"      H0: Homoscedastic (constant variance)")
+        print(f"      LM-statistic: {white_stat:.4f}")
+        print(f"      p-value: {white_pvalue:.4f}")
+        print(f"      Result: {'PASS - Constant variance' if white_pvalue > 0.05 else 'FAIL - Heteroscedasticity detected'}")
+        print(f"\n   b) Levene Test (Pre vs Post Intervention)")
+    else:
+        print(f"   a) Levene Test (Pre vs Post Intervention)")
+
+    print(f"      H0: Equal variances")
+    print(f"      Statistic: {levene_stat:.4f}")
+    print(f"      p-value: {levene_pvalue:.4f}")
+    print(f"      Std (pre): {pre_resid.std():.4f}, Std (post): {post_resid.std():.4f}")
+    print(f"      Result: {'PASS - Equal variances' if levene_pvalue > 0.05 else 'FAIL - Unequal variances'}")
+    print("="*50)
 
 
+
+
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Get fitted values and residuals
+    df_crime_sampled['fitted'] = result.fittedvalues
+    df_crime_sampled['residuals'] = result.resid
+
+    # Calculate statistics
+    resid = df_crime_sampled['residuals'].values
+    mean_resid = resid.mean()
+    std_resid = resid.std()
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(df_crime_sampled['residuals'], bins=30, density=True, alpha=0.7, edgecolor='black')
+    ax.set_xlabel('Residuals')
+    ax.set_ylabel('Density')
+    ax.set_title('Residual Distribution')
+
+    # Add normal curve overlay
+    x = np.linspace(df_crime_sampled['residuals'].min(), df_crime_sampled['residuals'].max(), 100)
+    ax.plot(x, 1/(std_resid * np.sqrt(2 * np.pi)) * np.exp(-0.5 * ((x - mean_resid) / std_resid)**2), 
+            'r-', linewidth=2, label='Normal')
+    ax.axvline(mean_resid, color='red', linestyle='--', linewidth=1.5, label=f'Mean={mean_resid:.3f}')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
 
 

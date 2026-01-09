@@ -44,3 +44,6 @@ pre_located_cam = [
 ]
 
 dir_figs = './papers/figs'
+
+dir_val_data = './data/20220828-20230828.csv'
+dir_implemented_plans = './data/implemented_plans'

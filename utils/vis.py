@@ -997,36 +997,18 @@ def html_to_high_dpi_image(html_path, output_path, width=900, height=560):
 
 
 def line_crime_count(df1, df2, df1Label, df2Label, resample, typeFilter=None, 
-                     use_moving_avg=False, window=7):
-    """
-    Plot crime counts over time with average count reference lines.
+                     use_moving_avg=False, window=7, save_path=None):
+
+    import matplotlib.dates as mdates
     
-    Parameters:
-    -----------
-    df1, df2 : pd.DataFrame
-        DataFrames with datetime index and 'Type' column
-    df1Label, df2Label : str
-        Labels for the two datasets
-    resample : str
-        Resampling frequency (e.g., 'D', 'W', 'M')
-    typeFilter : str, optional
-        Filter for specific crime type (e.g., 'Assault Offenses', 'Larceny')
-    use_moving_avg : bool, default False
-        If True, plot moving average instead of raw counts
-    window : int, default 7
-        Window size for moving average (only used if use_moving_avg=True)
-        
-    Common crime types:
-        - Assault Offenses
-        - Larceny
-        - Vandalism
-        - Burglary
-        - Theft of Motor Vehicles
-    """
+    # Set font to Arial and increase size BEFORE creating the plot
+    plt.rcParams['font.family'] = 'Arial'
+    plt.rcParams['font.size'] = 16
+    
     # Filter by crime type if specified
     if typeFilter is not None:
-        df1 = df1[df1.Type == typeFilter]
-        df2 = df2[df2.Type == typeFilter]
+        df1 = df1[df1.Type == typeFilter].copy()
+        df2 = df2[df2.Type == typeFilter].copy()
     
     # Resample and count
     crimeCount_df1 = df1.resample(resample).count()
@@ -1040,52 +1022,85 @@ def line_crime_count(df1, df2, df1Label, df2Label, resample, typeFilter=None,
     if use_moving_avg:
         plot_data1 = crimeCount_df1[count_col1].rolling(window=window, center=True).mean()
         plot_data2 = crimeCount_df2[count_col2].rolling(window=window, center=True).mean()
-        curve_label_suffix = f' (MA-{window})'
     else:
         plot_data1 = crimeCount_df1[count_col1]
         plot_data2 = crimeCount_df2[count_col2]
-        curve_label_suffix = ''
     
     # Calculate averages (always from original data)
     avg_df1 = crimeCount_df1[count_col1].mean()
     avg_df2 = crimeCount_df2[count_col2].mean()
     
-    # Create plot
-    plt.figure(figsize=(10, 6))
+    # Custom colors (darker versions)
+    colors = ['#D9534F', '#F5A623']
     
-    # Plot crime count curves (raw or moving average)
-    plt.plot(crimeCount_df1.index, plot_data1, 
-             label=f'{df1Label}{curve_label_suffix}', linewidth=2, alpha=0.8)
-    plt.plot(crimeCount_df2.index, plot_data2, 
-             label=f'{df2Label}{curve_label_suffix}', linewidth=2, alpha=0.8)
+    # Create plot with shorter vertical size
+    fig, ax = plt.subplots(figsize=(10, 4))
     
-    # Plot average lines (based on original data)
-    plt.axhline(y=avg_df1, color='C0', linestyle='--', linewidth=1.5, 
-                label=f'{df1Label} Avg: {avg_df1:.2f}', alpha=0.7)
-    plt.axhline(y=avg_df2, color='C1', linestyle='--', linewidth=1.5, 
-                label=f'{df2Label} Avg: {avg_df2:.2f}', alpha=0.7)
+    # Plot crime count curves (raw or moving average) - only these appear in legend
+    ax.plot(crimeCount_df1.index, plot_data1, 
+            label='Before action', linewidth=2, alpha=0.8, color=colors[0])
+    ax.plot(crimeCount_df2.index, plot_data2, 
+            label='After action', linewidth=2, alpha=0.8, color=colors[1])
     
-    # Labels and formatting
-    plt.xlabel('Date', fontsize=12)
-    ylabel = f'Count / {resample}'
-    if use_moving_avg:
-        ylabel += f' (Moving Avg, window={window})'
-    plt.ylabel(ylabel, fontsize=12)
+    # Plot average lines (based on original data) - no labels for legend
+    ax.axhline(y=avg_df1, color=colors[0], linestyle='--', linewidth=1.5, alpha=0.7)
+    ax.axhline(y=avg_df2, color=colors[1], linestyle='--', linewidth=1.5, alpha=0.7)
     
-    # Title with crime type if filtered
-    title = 'Crime Count Over Time'
-    if typeFilter is not None:
-        title += f': {typeFilter}'
-    else:
-        title += ': All Types'
-    if use_moving_avg:
-        title += f' [Moving Average]'
-    plt.title(title, fontsize=14, pad=15)
+    # Get y-axis limits to calculate offset
+    ylim = ax.get_ylim()
+    y_range = ylim[1] - ylim[0]
     
-    plt.legend(loc='best', framealpha=0.9)
-    plt.grid(True, alpha=0.3)
+    # Add annotations for average values at the left edge using axis coordinates
+    # Annotate "before" line (further below the line)
+    ax.text(0.2, avg_df1 - 0.05 * y_range, f'{avg_df1:.2f}',
+            transform=ax.get_yaxis_transform(),
+            color='black',
+            fontsize=16,
+            fontfamily='Arial',
+            ha='left',
+            va='top')
+    
+    # Annotate "after" line (above the line)
+    ax.text(0.2, avg_df2, f'{avg_df2:.2f}',
+            transform=ax.get_yaxis_transform(),
+            color='black',
+            fontsize=16,
+            fontfamily='Arial',
+            ha='left',
+            va='bottom')
+    
+    # Y-axis label with line break and /day
+    ax.set_ylabel('Crime count / day\n(moving averaged)', fontsize=16, fontfamily='Arial')
+    
+    # Set tick label font size to match reference (16)
+    ax.tick_params(axis='both', labelsize=16)
+    
+    # Explicitly set tick label font to Arial
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontfamily('Arial')
+    
+    # Legend matching reference style
+    legend = ax.legend(frameon=False, fontsize=16, loc='upper center', 
+                       ncol=2, bbox_to_anchor=(0.5, 1.25),
+                       handletextpad=0.3, columnspacing=1.5,
+                       prop={'family': 'Arial', 'size': 16})
+    
+    # Turn off grid
+    ax.grid(False)
+    
+    # Set x-axis limits to match data range
+    all_dates = crimeCount_df1.index.union(crimeCount_df2.index)
+    ax.set_xlim(all_dates.min(), all_dates.max())
+    
+    # Reduce number of x-axis ticks for dates
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    
+    # Make box edge thicker (matching reference at 1.5)
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+    
     plt.tight_layout()
-    plt.show()
     
     # Print summary statistics
     print(f"\n{'='*50}")
@@ -1107,4 +1122,365 @@ def line_crime_count(df1, df2, df1Label, df2Label, resample, typeFilter=None,
         print(f"  MA Min: {plot_data2.min():.2f}")
         print(f"  MA Max: {plot_data2.max():.2f}")
     print(f"{'='*50}\n")
+    
+    # Save or show
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Figure saved to: {save_path}")
+    else:
+        plt.show()
 
+    return
+
+
+def map_plc_over_time(df_buffers, city_b, roads=None, save_path=None):
+    import geopandas as gpd
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.cm import ScalarMappable
+    
+    # Set font to Arial
+    plt.rcParams['font.family'] = 'Arial'
+    
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    # Base map
+    city_boundary = gpd.read_file(city_b)
+    city_boundary = city_boundary[city_boundary['NAME'] == 'Warner Robins']
+    city_boundary = city_boundary.to_crs(epsg=3857)
+    city_boundary.plot(ax=ax, facecolor='lightgray', edgecolor='none')
+    
+    if roads is not None:
+        roads = roads.to_crs(epsg=3857)
+        roads_short = roads[roads.intersects(city_boundary.buffer(0.002).unary_union)]
+        roads_short.plot(ax=ax, color='#3C535B', linewidth=1.5)
+    
+    # Plot buffer polygons on top
+    df_buffers = df_buffers.to_crs(epsg=3857)
+    max_freq = df_buffers['frequency'].max()
+    alphas = df_buffers['frequency'] / max_freq
+    df_buffers.plot(ax=ax, alpha=alphas, edgecolor='k', facecolor='#4A90B8', 
+                   linewidth=0.5, zorder=4)
+    
+    # Create custom colormap matching the buffer color with varying alpha
+    colors = [(1, 1, 1, 0), (0.29, 0.565, 0.722, 1)]  # Transparent to #4A90B8
+    n_bins = 100
+    cmap = LinearSegmentedColormap.from_list('custom_blue', colors, N=n_bins)
+    
+    # Add horizontal colorbar legend at the top
+    norm = Normalize(vmin=0, vmax=max_freq)
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    
+    # Create colorbar at the top using axes positioning
+    cax = fig.add_axes([0.3, 0.86, 0.4, 0.02])  # [left, bottom, width, height]
+    cbar = plt.colorbar(sm, cax=cax, orientation='horizontal')
+    cbar.set_label('Placement frequency', labelpad=10, fontsize=14)
+    cbar.ax.tick_params(labelsize=12)
+    cbar.ax.xaxis.set_ticks_position('bottom')
+    cbar.ax.xaxis.set_label_position('top')
+    
+    ax.set_aspect('equal')
+    ax.axis('off')
+    
+    if save_path is None:
+        plt.tight_layout()
+        plt.show()
+    else:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return
+
+
+def line_crime_count_fitting(df, result, save_path=None):
+    import matplotlib.dates as mdates
+    import numpy as np
+    
+    # Get fitted values and residuals
+    df['fitted'] = result.fittedvalues
+    df['residuals'] = result.resid
+    
+    # Intervention point
+    intervention_idx = df['intervention'].idxmax()
+    intervention_date = df.index[df.index.get_loc(intervention_idx)]
+    
+    # Set font to Arial and increase size BEFORE creating the plot
+    plt.rcParams['font.family'] = 'Arial'
+    plt.rcParams['font.size'] = 16
+    
+    # Plot with shorter vertical size
+    fig, ax = plt.subplots(figsize=(10, 4))
+    
+    # Use datetime index for x-axis with colors from the image
+    ax.plot(df.index, df['y'], 'o', alpha=0.6, label='Actual', markersize=3, markeredgewidth=0, color='#5B8FA3')
+    ax.plot(df.index, df['fitted'], '-', color='#D9534F', label='Fitted', linewidth=2)
+    ax.axvline(intervention_date, color='#7B5C8F', linestyle='--', linewidth=1.5, label='Action date')
+    
+    # Calculate and plot trend lines for fitted values
+    # Before intervention
+    before_mask = df.index < intervention_date
+    if before_mask.sum() > 1:
+        x_before = np.arange(before_mask.sum())
+        y_before = df.loc[before_mask, 'fitted'].values
+        z_before = np.polyfit(x_before, y_before, 1)
+        p_before = np.poly1d(z_before)
+        ax.plot(df.index[before_mask], p_before(x_before), '-', color='grey', linewidth=1.5, label='Trend')
+    
+    # After intervention
+    after_mask = df.index >= intervention_date
+    if after_mask.sum() > 1:
+        x_after = np.arange(after_mask.sum())
+        y_after = df.loc[after_mask, 'fitted'].values
+        z_after = np.polyfit(x_after, y_after, 1)
+        p_after = np.poly1d(z_after)
+        ax.plot(df.index[after_mask], p_after(x_after), '-', color='grey', linewidth=1.5)  # No label for second trend line
+    
+    ax.set_ylabel('Crime count / day', fontsize=16)
+    legend = ax.legend(frameon=False, fontsize=16, loc='upper center', ncol=4, bbox_to_anchor=(0.5, 1.25), markerscale=3, columnspacing=1.0, handletextpad=0.3)
+    ax.grid(False)
+    
+    # Set x-axis limits to match data range
+    ax.set_xlim(df.index.min(), df.index.max())
+    
+    # Reduce number of x-axis ticks for dates
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    
+    # Make box edge thicker
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+
+
+def line_fitting_rediduals(df, result, save_path=None):
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    import numpy as np
+    from scipy import stats
+    from statsmodels.stats.diagnostic import het_white
+    
+    # Set font to Arial globally
+    plt.rcParams['font.family'] = 'Arial'
+    plt.rcParams['font.size'] = 16
+    
+    # Get fitted values and residuals
+    df['fitted'] = result.fittedvalues
+    df['residuals'] = result.resid
+    
+    # Intervention point
+    intervention_idx = df['intervention'].idxmax()
+    intervention_date = df.index[df.index.get_loc(intervention_idx)]
+    
+    # Statistical tests for residuals
+    resid = df['residuals'].values
+    
+    # Zero Mean test (t-test)
+    t_stat, p_value_mean = stats.ttest_1samp(resid, 0)
+    mean_resid = resid.mean()
+    std_resid = resid.std()
+    
+    # Homoscedasticity tests
+    # White test
+    try:
+        white_stat, white_pvalue, _, _ = het_white(resid, result.model.exog)
+    except:
+        white_stat, white_pvalue = np.nan, np.nan
+    
+    # Levene's test (pre vs post intervention)
+    pre_resid = df[df['intervention'] == 0]['residuals']
+    post_resid = df[df['intervention'] == 1]['residuals']
+    levene_stat, levene_pvalue = stats.levene(pre_resid, post_resid)
+    
+    # Plot with reference styling
+    fig, ax = plt.subplots(figsize=(10, 4))
+    
+    # Plot residuals using datetime index
+    ax.plot(df.index, df['residuals'], 'o', alpha=0.6, markersize=3, 
+            markeredgewidth=0, color='#5B8FA3', label='Residuals')
+    
+    # Add mean line
+    ax.axhline(mean_resid, color='#D9534F', linestyle='-', linewidth=1.5, 
+               label='Mean')
+    
+    # Zero line - same thickness and color as box edge (no label)
+    ax.axhline(0, color='black', linestyle='-', linewidth=1.5)
+    
+    # Add ±2 std bands
+    ax.axhline(mean_resid + 2*std_resid, color='#F5A623', linestyle=':', 
+               linewidth=1.5, alpha=0.7, label='±2σ')
+    ax.axhline(mean_resid - 2*std_resid, color='#F5A623', linestyle=':', 
+               linewidth=1.5, alpha=0.7)
+    
+    # Intervention line
+    ax.axvline(intervention_date, color='#7B5C8F', linestyle='--', 
+               linewidth=1.5, label='Action date')
+    
+    # Labels and legend
+    ax.set_ylabel('Residuals', fontsize=16, fontfamily='Arial')
+    legend = ax.legend(frameon=False, fontsize=16, loc='upper center', ncol=4, 
+                       bbox_to_anchor=(0.5, 1.3), markerscale=3, 
+                       handletextpad=0.3, columnspacing=1.5,
+                       prop={'family': 'Arial', 'size': 16})
+    ax.grid(False)
+    
+    # Set tick label font size to match y-axis label
+    ax.tick_params(axis='both', labelsize=16)
+    
+    # Explicitly set tick label font to Arial
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontfamily('Arial')
+    
+    # Set x-axis limits to match data range
+    ax.set_xlim(df.index.min(), df.index.max())
+    
+    # Reduce number of x-axis ticks for dates
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    
+    # Make box edge thicker
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+    
+    # Print detailed test results
+    print("\n" + "="*50)
+    print("RESIDUAL DIAGNOSTIC TESTS")
+    print("="*50)
+    print(f"\n1. Zero Mean Test (One-sample t-test)")
+    print(f"   H0: mean = 0")
+    print(f"   Sample mean: {mean_resid:.6f}")
+    print(f"   t-statistic: {t_stat:.4f}")
+    print(f"   p-value: {p_value_mean:.4f}")
+    print(f"   Result: {'PASS - Mean not significantly different from 0' if p_value_mean > 0.05 else 'FAIL - Mean significantly different from 0'}")
+    
+    print(f"\n2. Homoscedasticity Tests")
+    if not np.isnan(white_pvalue):
+        print(f"   a) White Test")
+        print(f"      H0: Homoscedastic (constant variance)")
+        print(f"      LM-statistic: {white_stat:.4f}")
+        print(f"      p-value: {white_pvalue:.4f}")
+        print(f"      Result: {'PASS - Constant variance' if white_pvalue > 0.05 else 'FAIL - Heteroscedasticity detected'}")
+        print(f"\n   b) Levene Test (Pre vs Post Intervention)")
+    else:
+        print(f"   a) Levene Test (Pre vs Post Intervention)")
+    
+    print(f"      H0: Equal variances")
+    print(f"      Statistic: {levene_stat:.4f}")
+    print(f"      p-value: {levene_pvalue:.4f}")
+    print(f"      Std (pre): {pre_resid.std():.4f}, Std (post): {post_resid.std():.4f}")
+    print(f"      Result: {'PASS - Equal variances' if levene_pvalue > 0.05 else 'FAIL - Unequal variances'}")
+    print("="*50)
+
+
+def dist_fitting_residuals(df, result, save_path=None):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from scipy import stats
+    
+    # Set font to Arial globally
+    plt.rcParams['font.family'] = 'Arial'
+    plt.rcParams['font.size'] = 16
+    
+    # Get fitted values and residuals
+    df['fitted'] = result.fittedvalues
+    df['residuals'] = result.resid
+    
+    # Calculate statistics
+    resid = df['residuals'].values
+    mean_resid = resid.mean()
+    std_resid = resid.std()
+    
+    # Normality tests
+    shapiro_stat, shapiro_pvalue = stats.shapiro(resid)
+    ks_stat, ks_pvalue = stats.kstest(resid, 'norm', args=(mean_resid, std_resid))
+    jb_stat, jb_pvalue = stats.jarque_bera(resid)
+    
+    # Plot with matching style
+    fig, ax = plt.subplots(figsize=(10, 4))
+    
+    # Histogram with matching color scheme
+    ax.hist(df['residuals'], bins=30, density=True, alpha=0.6, 
+            edgecolor='none', color='#5B8FA3', label='Residuals')
+    
+    # Add normal curve overlay - orange color
+    x = np.linspace(df['residuals'].min(), df['residuals'].max(), 100)
+    ax.plot(x, stats.norm.pdf(x, mean_resid, std_resid), 
+            color='#F5A623', linewidth=2, label='Density line')
+    
+    # Mean line - red color
+    ax.axvline(mean_resid, color='#D9534F', linestyle='--', 
+               linewidth=1.5, label='Mean')
+    
+    # Labels and legend
+    ax.set_xlabel('Residuals', fontsize=16, fontfamily='Arial')
+    ax.set_ylabel('Density', fontsize=16, fontfamily='Arial')
+    legend = ax.legend(frameon=False, fontsize=16, loc='upper center', ncol=3,
+                       bbox_to_anchor=(0.5, 1.30), markerscale=3,
+                       handletextpad=0.3, columnspacing=1.5,
+                       prop={'family': 'Arial', 'size': 16})
+    ax.grid(False)
+    
+    # Set tick label font size to match y-axis label
+    ax.tick_params(axis='both', labelsize=16)
+    
+    # Explicitly set tick label font to Arial
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontfamily('Arial')
+    
+    # Make box edge thicker
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+    
+    # Print detailed test results
+    print("\n" + "="*50)
+    print("NORMALITY DIAGNOSTIC TESTS")
+    print("="*50)
+    print(f"\nResidual Statistics:")
+    print(f"   Mean: {mean_resid:.6f}")
+    print(f"   Std Dev: {std_resid:.6f}")
+    print(f"   Skewness: {stats.skew(resid):.6f}")
+    print(f"   Kurtosis: {stats.kurtosis(resid):.6f}")
+    
+    print(f"\n1. Shapiro-Wilk Test")
+    print(f"   H0: Data is normally distributed")
+    print(f"   W-statistic: {shapiro_stat:.4f}")
+    print(f"   p-value: {shapiro_pvalue:.4f}")
+    print(f"   Result: {'PASS - Normally distributed' if shapiro_pvalue > 0.05 else 'FAIL - Not normally distributed'}")
+    
+    print(f"\n2. Kolmogorov-Smirnov Test")
+    print(f"   H0: Data follows normal distribution")
+    print(f"   KS-statistic: {ks_stat:.4f}")
+    print(f"   p-value: {ks_pvalue:.4f}")
+    print(f"   Result: {'PASS - Follows normal distribution' if ks_pvalue > 0.05 else 'FAIL - Does not follow normal distribution'}")
+    
+    print(f"\n3. Jarque-Bera Test")
+    print(f"   H0: Data has skewness and kurtosis matching normal distribution")
+    print(f"   JB-statistic: {jb_stat:.4f}")
+    print(f"   p-value: {jb_pvalue:.4f}")
+    print(f"   Result: {'PASS - Matches normal distribution' if jb_pvalue > 0.05 else 'FAIL - Does not match normal distribution'}")
+    print("="*50)

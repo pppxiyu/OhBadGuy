@@ -4,7 +4,7 @@ from utils import val
 import utils.val as val
 import utils.vis as vis
 
-analysis_name = 'validation'
+analysis_name = 'validation_with_cams'
 
 if analysis_name == 'nation_dist':
     # nationwide camera distribution
@@ -47,7 +47,7 @@ if analysis_name == 'city_map':
         dir_city_boundary, roads=road_data.road_lines.copy(), network=road_data.road_network.copy() # type: ignore
     )
 
-if analysis_name == 'validation':
+if analysis_name == 'validation_with_cams':
     import geopandas as gpd
     from shapely import Point
     import numpy as np
